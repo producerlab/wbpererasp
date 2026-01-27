@@ -44,35 +44,85 @@ async def run_telegram_bot():
     await bot_main()
 
 
+def kill_old_bot_processes():
+    """Убивает все старые процессы bot.py и run.py используя psutil"""
+    import os
+    import signal
+    import time
+
+    try:
+        import psutil
+    except ImportError:
+        logger.warning("psutil not installed, skipping process cleanup")
+        return 0
+
+    current_pid = os.getpid()
+    killed_count = 0
+
+    logger.info(f"🔍 Current PID: {current_pid}")
+    logger.info(f"🔍 Searching for old bot processes...")
+
+    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+        try:
+            cmdline = proc.info['cmdline']
+            if not cmdline:
+                continue
+
+            cmdline_str = ' '.join(cmdline)
+
+            # Проверяем, это процесс бота
+            if ('python' in cmdline_str.lower() and
+                ('bot.py' in cmdline_str or 'run.py' in cmdline_str)):
+
+                pid = proc.info['pid']
+
+                # Не убиваем текущий процесс
+                if pid == current_pid:
+                    continue
+
+                logger.warning(f"⚠️  Killing old bot process: PID {pid} - {cmdline_str[:100]}")
+
+                try:
+                    # Пробуем SIGTERM
+                    os.kill(pid, signal.SIGTERM)
+                    time.sleep(0.5)
+
+                    # Если не помогло - SIGKILL
+                    if psutil.pid_exists(pid):
+                        os.kill(pid, signal.SIGKILL)
+
+                    killed_count += 1
+                    logger.info(f"✅ Killed PID {pid}")
+                except ProcessLookupError:
+                    pass
+                except Exception as e:
+                    logger.error(f"❌ Failed to kill PID {pid}: {e}")
+
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+
+    if killed_count > 0:
+        logger.info(f"✅ Killed {killed_count} old bot process(es)")
+        logger.info(f"⏳ Waiting 3 seconds for cleanup...")
+        time.sleep(3)
+    else:
+        logger.info(f"✅ No old bot processes found")
+
+    return killed_count
+
+
 def main():
     """Главная функция запуска обоих сервисов"""
     # КРИТИЧНО: Убиваем все старые процессы bot.py перед запуском
-    import subprocess
-    import os
+    logger.info("=" * 50)
+    logger.info("🔥 KILLING OLD BOT PROCESSES")
+    logger.info("=" * 50)
+
     try:
-        current_pid = os.getpid()
-        logger.info(f"Current process PID: {current_pid}")
-
-        # Находим все Python процессы
-        result = subprocess.run(
-            ["ps", "aux"],
-            capture_output=True,
-            text=True
-        )
-
-        for line in result.stdout.split('\n'):
-            if 'python' in line.lower() and 'bot.py' in line:
-                parts = line.split()
-                if len(parts) > 1:
-                    pid = int(parts[1])
-                    if pid != current_pid:
-                        logger.warning(f"Killing old bot process: PID {pid}")
-                        try:
-                            subprocess.run(["kill", "-9", str(pid)])
-                        except:
-                            pass
+        killed = kill_old_bot_processes()
+        logger.info(f"Process cleanup completed: {killed} processes killed")
     except Exception as e:
-        logger.warning(f"Failed to kill old processes: {e}")
+        logger.error(f"Failed to kill old processes: {e}", exc_info=True)
 
     print("=" * 50)
     print("🚀 WB Redistribution Bot + API")

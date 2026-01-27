@@ -305,6 +305,14 @@ async def main():
     logger.info("Starting bot...")
     try:
         await dp.start_polling(bot)
+    except Exception as e:
+        error_msg = str(e).lower()
+        if 'conflict' in error_msg or 'terminated by other getupdates' in error_msg:
+            logger.error("❌ TelegramConflictError: Another bot instance is running!")
+            logger.error("Exiting with error code to trigger Railway restart...")
+            await bot.session.close()
+            sys.exit(1)  # Exit with error to trigger Railway restart
+        raise
     finally:
         # if monitor:
         #     await monitor.stop()
