@@ -323,7 +323,14 @@ class WBApiClient:
             )
             return True
         except WBAuthError:
+            # 401 - токен невалиден
             return False
+        except WBNotFoundError:
+            # 404 - endpoint не найден, НО токен валиден!
+            # Это означает что у токена нет прав на этот endpoint
+            # или склады не настроены
+            logger.info("Warehouses endpoint returned 404, but token is valid")
+            return True
         except WBRateLimitError:
             # Rate limit - токен валиден, просто превышен лимит
             return True
