@@ -232,28 +232,47 @@ async def process_token_name(message: Message, state: FSMContext):
     token_id = db.add_wb_token(user_id, encrypted, name)
 
     if token_id:
+        logger.info(f"Token added successfully: token_id={token_id}, name={name}")
+
         # Добавляем поставщика автоматически
-        supplier_id = db.add_supplier(
-            user_id=user_id,
-            name=name,
-            token_id=token_id
-        )
+        try:
+            supplier_id = db.add_supplier(
+                user_id=user_id,
+                name=name,
+                token_id=token_id
+            )
+            logger.info(f"Supplier added: supplier_id={supplier_id}")
+        except Exception as e:
+            logger.error(f"Failed to add supplier: {e}")
+            await message.answer(
+                f"⚠️ Токен добавлен, но не удалось создать поставщика.\n\n"
+                f"Ошибка: {str(e)}\n\n"
+                f"Используйте /token для повторной попытки."
+            )
+            await state.clear()
+            return
 
         try:
             # Показываем кнопку Mini App после успешного добавления токена
             webapp_url = Config.WEBAPP_URL
+            logger.info(f"WEBAPP_URL from config: {webapp_url}")
+
             if not webapp_url.endswith('/'):
                 webapp_url += '/'
+
+            full_url = f"{webapp_url}webapp/index.html"
+            logger.info(f"Full Mini App URL: {full_url}")
 
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [
                     InlineKeyboardButton(
                         text="📦 Открыть Перераспределение",
-                        web_app=WebAppInfo(url=f"{webapp_url}webapp/index.html")
+                        web_app=WebAppInfo(url=full_url)
                     )
                 ]
             ])
 
+            logger.info("Sending message with Mini App button...")
             await message.answer(
                 f"✅ <b>Токен успешно добавлен!</b>\n\n"
                 f"📛 Название: {name}\n"
@@ -265,8 +284,9 @@ async def process_token_name(message: Message, state: FSMContext):
                 parse_mode='HTML',
                 reply_markup=keyboard
             )
+            logger.info("Message sent successfully!")
         except Exception as e:
-            logger.error(f"Failed to send message with Mini App button: {e}")
+            logger.error(f"Failed to send message with Mini App button: {e}", exc_info=True)
             # Отправляем сообщение без кнопки
             await message.answer(
                 f"✅ <b>Токен успешно добавлен!</b>\n\n"
