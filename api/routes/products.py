@@ -9,6 +9,7 @@ from database import Database
 from wb_api.client import WBApiClient
 from wb_api.stocks import StocksAPI
 from api.main import get_current_user, get_db
+from utils.encryption import decrypt_token
 
 
 router = APIRouter()
@@ -40,9 +41,12 @@ async def search_product(
     if not token:
         raise HTTPException(status_code=404, detail="WB API token not found")
 
+    # Расшифровываем токен
+    decrypted_token = decrypt_token(token['encrypted_token'])
+
     try:
         # Ищем товар
-        async with WBApiClient(token['token']) as client:
+        async with WBApiClient(decrypted_token) as client:
             api = StocksAPI(client)
 
             # Пытаемся преобразовать в число

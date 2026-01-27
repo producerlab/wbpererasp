@@ -9,6 +9,7 @@ from database import Database
 from wb_api.client import WBApiClient
 from wb_api.stocks import StocksAPI
 from api.main import get_current_user, get_db
+from utils.encryption import decrypt_token
 
 
 router = APIRouter()
@@ -42,8 +43,11 @@ async def get_stocks_by_nm_id(
     if not token:
         raise HTTPException(status_code=404, detail="Token not found")
 
+    # Расшифровываем токен
+    decrypted_token = decrypt_token(token['encrypted_token'])
+
     try:
-        async with WBApiClient(token['token']) as client:
+        async with WBApiClient(decrypted_token) as client:
             api = StocksAPI(client)
             stocks = await api.get_stocks_for_sku(str(nm_id))
 

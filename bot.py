@@ -22,11 +22,13 @@ from aiogram.client.default import DefaultBotProperties
 from config import Config
 from db_factory import get_database
 from handlers import token_router, supplier_router, monitoring_router, booking_router, redistribution_router
+from handlers.token_management import TokenStates
 from services.coefficient_monitor import CoefficientMonitor, MonitoringEvent
 from services.notification_service import NotificationService
 from services.slot_booking import SlotBookingService
 from wb_api.client import WBApiClient
 from utils.encryption import encrypt_token
+from aiogram.fsm.context import FSMContext
 
 # Настройка логирования
 logging.basicConfig(
@@ -200,7 +202,7 @@ async def cmd_stats(message: Message):
     )
 
 
-async def handle_text_message(message: Message):
+async def handle_text_message(message: Message, state: FSMContext):
     """
     Обработчик обычных текстовых сообщений.
     Если у пользователя нет токена - пытается распознать WB токен автоматически.
@@ -254,47 +256,17 @@ async def handle_text_message(message: Message):
         )
         return
 
-    # Токен валидный - добавляем
-    encrypted = encrypt_token(text)
-    name = "Основной"
-    token_id = db.add_wb_token(user_id, encrypted, name)
-
-    if not token_id:
-        await status_msg.edit_text(
-            "❌ Этот токен уже добавлен.\n\n"
-            "Используйте /token для управления токенами."
-        )
-        return
-
-    # Создаём поставщика автоматически
-    supplier_id = db.add_supplier(
-        user_id=user_id,
-        name=name,
-        token_id=token_id
-    )
-
-    # Показываем кнопку Mini App
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(
-                text="📦 Открыть Перераспределение",
-                web_app=WebAppInfo(url=f"{Config.WEBAPP_URL}/webapp/index.html")
-            )
-        ]
-    ])
+    # Сохраняем токен во временное хранилище
+    await state.update_data(token=text)
 
     await status_msg.edit_text(
-        f"✅ <b>Токен успешно добавлен!</b>\n\n"
-        f"🎉 Mini App готов к работе!\n\n"
-        f"Теперь вы можете:\n"
-        f"📦 Открыть Mini App (кнопка ниже)\n"
-        f"📊 /monitor - мониторинг коэффициентов\n"
-        f"📈 /coefficients - текущие коэффициенты\n"
-        f"🎯 /book - забронировать слот\n\n"
-        f"<i>Нажмите кнопку ниже для открытия перераспределения 👇</i>",
-        parse_mode=ParseMode.HTML,
-        reply_markup=keyboard
+        "✅ Токен валиден!\n\n"
+        "Введите название компании/ИП для этого токена:\n"
+        "(например: <b>ИП Хоснуллин</b> или <b>ООО Мегаторг</b>)\n\n"
+        "Или отправьте /skip для имени по умолчанию.",
+        parse_mode=ParseMode.HTML
     )
+    await state.set_state(TokenStates.waiting_for_name)
 
 
 async def start_monitoring():

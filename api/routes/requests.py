@@ -13,6 +13,7 @@ from database import Database
 from wb_api.client import WBApiClient
 from wb_api.supplies import SuppliesAPI, CargoType
 from api.main import get_current_user, get_db
+from utils.encryption import decrypt_token
 
 
 router = APIRouter()
@@ -198,8 +199,9 @@ async def delete_request(
         try:
             supplier = db.get_supplier(request['supplier_id'])
             token = db.get_wb_token(user_id, supplier['token_id'])
+            decrypted_token = decrypt_token(token['encrypted_token'])
 
-            async with WBApiClient(token['token']) as client:
+            async with WBApiClient(decrypted_token) as client:
                 api = SuppliesAPI(client)
                 await api.cancel_supply(request['supply_id'])
         except Exception as e:
@@ -255,9 +257,12 @@ async def execute_request(
             detail="Token not found"
         )
 
+    # Расшифровываем токен
+    decrypted_token = decrypt_token(token['encrypted_token'])
+
     try:
         # Создаём поставку
-        async with WBApiClient(token['token']) as client:
+        async with WBApiClient(decrypted_token) as client:
             api = SuppliesAPI(client)
 
             supply_name = f"Перемещение {request['nm_id']} → {request['target_warehouse_name']}"
