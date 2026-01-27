@@ -2,17 +2,17 @@
 Telegram handlers для бота перераспределения остатков WB.
 
 Модули:
-- token_management: Управление WB API токенами
-- supplier_management: Управление поставщиками
 - redistribution: Перераспределение остатков между складами
+- browser_auth: Авторизация через SMS в ЛК WB
+- payment_handler: Оплата и управление балансом
 """
 
-from .token_management import router as token_router
-from .supplier_management import router as supplier_router
 from .redistribution import router as redistribution_router
+from .browser_auth import router as browser_auth_router
+from .payment_handler import router as payment_router
 
 __all__ = [
-    'token_router',
-    'supplier_router',
     'redistribution_router',
+    'browser_auth_router',
+    'payment_router',
 ]

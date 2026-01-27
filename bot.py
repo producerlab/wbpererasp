@@ -2,10 +2,9 @@
 WB Redistribution Bot - Бот для перераспределения остатков между складами Wildberries.
 
 Функции:
-- Мониторинг коэффициентов приёмки в реальном времени
-- Автобронирование слотов при появлении выгодных коэффициентов
-- Уведомления в Telegram об изменениях
-- Рекомендации "куда везти" на основе географии заказов
+- Авторизация через SMS (номер телефона)
+- Перераспределение остатков между складами
+- Оплата через YooKassa
 """
 
 import asyncio
@@ -13,18 +12,15 @@ import logging
 import sys
 from typing import Optional
 
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart, Command
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 from aiogram.client.default import DefaultBotProperties
 
 from config import Config
 from db_factory import get_database
-from handlers import token_router, supplier_router, redistribution_router
-from handlers.token_management import TokenStates
-from wb_api.client import WBApiClient
-from utils.encryption import encrypt_token
+from handlers import redistribution_router, browser_auth_router, payment_router
 from aiogram.fsm.context import FSMContext
 
 # Настройка логирования
@@ -43,8 +39,8 @@ db = None  # Database instance (SQLite or PostgreSQL)
 bot: Optional[Bot] = None
 
 
-async def cmd_start(message: Message):
-    """Команда /start"""
+async def cmd_start(message: Message, state: FSMContext):
+    """Команда /start - начало работы с ботом через SMS авторизацию"""
     user_id = message.from_user.id
 
     # Регистрируем пользователя
@@ -54,68 +50,83 @@ async def cmd_start(message: Message):
         first_name=message.from_user.first_name
     )
 
-    # Проверяем, есть ли у пользователя WB токен
-    tokens = db.get_wb_tokens(user_id)
-    has_token = len(tokens) > 0
+    # Проверяем, есть ли активная browser session
+    session = db.get_browser_session(user_id)
 
-    if has_token:
-        # Если токен есть - показываем кнопку Mini App
-        webapp_url = Config.WEBAPP_URL.rstrip('/')
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(
+    if session:
+        # Если сессия есть - показываем кнопку Mini App
+        webapp_url = Config.WEBAPP_URL
+        if webapp_url and webapp_url.startswith("https://"):
+            full_url = f"{webapp_url.rstrip('/')}/webapp/index.html"
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
                     text="📦 Открыть Перераспределение",
-                    web_app=WebAppInfo(url=f"{webapp_url}/webapp/index.html")
-                )
-            ]
-        ])
+                    web_app=WebAppInfo(url=full_url)
+                )],
+                [InlineKeyboardButton(
+                    text="🔄 Войти заново",
+                    callback_data="reauth"
+                )]
+            ])
+
+            supplier_info = session.get('supplier_name', 'Ваш магазин')
+            phone = session.get('phone', 'не указан')
+
+            await message.answer(
+                f"👋 <b>Добро пожаловать в WB Redistribution Bot!</b>\n\n"
+                f"✅ Вы уже авторизованы!\n\n"
+                f"📛 Магазин: <b>{supplier_info}</b>\n"
+                f"📱 Телефон: <code>{phone}</code>\n\n"
+                f"Нажмите кнопку ниже, чтобы открыть панель перераспределения:\n\n"
+                f"<b>Команды:</b>\n"
+                f"/balance - проверить баланс\n"
+                f"/help - справка",
+                reply_markup=keyboard,
+                parse_mode=ParseMode.HTML
+            )
+        else:
+            await message.answer(
+                f"✅ Вы авторизованы, но WEBAPP_URL не настроен.\n\n"
+                f"Магазин: {session.get('supplier_name', 'N/A')}\n"
+                f"Телефон: {session.get('phone', 'N/A')}"
+            )
+    else:
+        # Если сессии нет - запускаем SMS авторизацию
+        from handlers.browser_auth import AuthStates
 
         await message.answer(
             f"👋 <b>Добро пожаловать в WB Redistribution Bot!</b>\n\n"
-            f"Я помогу вам:\n"
-            f"📦 Перераспределять остатки между складами\n\n"
-            f"<b>Команды:</b>\n"
-            f"📦 /redistribute - открыть форму перераспределения\n"
-            f"🏪 /suppliers - управление поставщиками\n"
-            f"🔑 /token - управление токенами\n"
-            f"❓ /help - справка",
-            parse_mode=ParseMode.HTML,
-            reply_markup=keyboard
+            f"📦 <b>Автоматическое перераспределение остатков между складами Wildberries</b>\n\n"
+            f"Для работы бота нужен доступ к вашему личному кабинету WB.\n\n"
+            f"🔐 <b>Авторизация через SMS</b>\n\n"
+            f"📱 Отправьте номер телефона в формате:\n"
+            f"<code>+79991234567</code> или <code>89991234567</code>\n\n"
+            f"⚠️ На этот номер придет SMS код от Wildberries.",
+            parse_mode=ParseMode.HTML
         )
-    else:
-        # Если токена нет - показываем инструкцию без кнопки
-        await message.answer(
-            f"👋 <b>Добро пожаловать в WB Redistribution Bot!</b>\n\n"
-            f"📦 <b>Перераспределение остатков между складами</b>\n\n"
-            f"⚠️ <b>Для начала работы необходимо добавить WB API токен:</b>\n\n"
-            f"Откройте <a href='https://seller.wildberries.ru/supplier-settings/access-to-api'>ЛК Wildberries</a> → Настройки → Доступ к API\n\n"
-            f"Создайте токен с правами:\n"
-            f"• <b>Маркетплейс</b>\n"
-            f"• <b>Поставки</b>\n"
-            f"• <b>Контент</b>\n\n"
-            f"Уровень доступа: <b>Чтение и запись</b>\n\n"
-            f"<b>Скопируйте токен и отправьте его мне 👇</b>\n"
-            f"Я проверю и подключу автоматически 🚀",
-            parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True
-        )
+
+        # Устанавливаем состояние ожидания телефона
+        await state.set_state(AuthStates.waiting_phone)
 
 
 async def cmd_help(message: Message):
     """Команда /help"""
     await message.answer(
         "<b>📚 Справка по командам</b>\n\n"
-        "<b>Токены:</b>\n"
-        "/token - добавить/удалить WB API токен\n\n"
-        "<b>Поставщики:</b>\n"
-        "/suppliers - управление поставщиками (переименование, удаление)\n\n"
+        "<b>Авторизация:</b>\n"
+        "/start - начать работу / авторизация\n"
+        "/logout - выйти из сессии\n\n"
         "<b>Перераспределение:</b>\n"
         "/redistribute - перераспределить остатки между складами\n\n"
-        "<b>Как получить WB API токен:</b>\n"
-        "1. ЛК WB → Настройки → Доступ к API\n"
-        "2. Создайте токен с правами: <b>Маркетплейс</b>, <b>Поставки</b>, <b>Контент</b>\n"
-        "3. Уровень доступа: <b>Чтение и запись</b>\n"
-        "4. Отправьте токен боту через /token",
+        "<b>Оплата:</b>\n"
+        "/balance - проверить баланс\n"
+        "/pay - пополнить баланс\n"
+        "/history - история операций\n\n"
+        "<b>Как это работает:</b>\n"
+        "1. Авторизуйтесь через /start (номер телефона + SMS)\n"
+        "2. Пополните баланс через /pay\n"
+        "3. Создайте заявку на перемещение через /redistribute\n"
+        "4. Бот автоматически выполнит перемещение при появлении квот",
         parse_mode=ParseMode.HTML
     )
 
@@ -136,132 +147,31 @@ async def cmd_stats(message: Message):
     )
 
 
-async def handle_token_auto(message: Message, state: FSMContext):
-    """
-    Автоматический обработчик WB API токена.
-    Срабатывает когда пользователь отправляет длинную строку (>50 символов).
-    """
-    text = message.text.strip()
-    user_id = message.from_user.id
+async def callback_reauth(callback: CallbackQuery, state: FSMContext):
+    """Callback для кнопки 'Войти заново'"""
+    user_id = callback.from_user.id
 
-    # Проверяем, что это похоже на токен (длинная строка)
-    if len(text) < 50:
-        return  # Слишком короткое - игнорируем
+    # Деактивируем текущую сессию
+    db.invalidate_browser_session(user_id)
 
-    # Проверяем, есть ли уже токен у пользователя
-    tokens = db.get_wb_tokens(user_id)
-    if len(tokens) > 0:
-        # Токен уже есть - игнорируем (пусть другие handlers обрабатывают)
-        return
+    from handlers.browser_auth import AuthStates
 
-    # Удаляем сообщение с токеном (безопасность)
-    try:
-        await message.delete()
-    except Exception as e:
-        logger.error(f"Failed to delete token message: {e}")
+    await callback.message.edit_text(
+        "🔄 Сессия сброшена.\n\n"
+        "📱 Отправьте номер телефона в формате:\n"
+        "<code>+79991234567</code> или <code>89991234567</code>\n\n"
+        "⚠️ На этот номер придет SMS код от Wildberries.",
+        parse_mode=ParseMode.HTML
+    )
 
-    # Проверяем и сохраняем токен
-    status_msg = await message.answer("🔄 Проверяю токен и получаю информацию о магазине...")
-    logger.info(f"Auto-processing token for user {user_id}, length: {len(text)}")
-
-    supplier_name = "Мой магазин"  # Дефолт
-
-    try:
-        async with WBApiClient(text) as client:
-            is_valid = await client.check_token()
-
-            if not is_valid:
-                await status_msg.edit_text(
-                    "❌ Токен невалиден.\n\n"
-                    "Убедитесь, что токен:\n"
-                    "• Скопирован полностью\n"
-                    "• Не истёк срок действия\n"
-                    "• Есть права: Маркетплейс, Поставки\n\n"
-                    "Попробуйте ещё раз или /token для помощи.",
-                    parse_mode=ParseMode.HTML
-                )
-                return
-
-            # Получаем название автоматически
-            supplier_info = await client.get_supplier_info()
-            if supplier_info and supplier_info.get("name"):
-                supplier_name = supplier_info["name"]
-                logger.info(f"Got supplier name: {supplier_name}")
-
-    except Exception as e:
-        logger.error(f"Token validation failed: {e}", exc_info=True)
-
-    # Сохраняем токен
-    try:
-        logger.info(f"Encrypting token...")
-        encrypted = encrypt_token(text)
-        logger.info(f"Token encrypted, saving to DB...")
-
-        token_id = db.add_wb_token(user_id, encrypted, supplier_name)
-        logger.info(f"add_wb_token returned: {token_id}")
-
-        if not token_id:
-            logger.warning("Token already exists (add_wb_token returned None/False)")
-            await status_msg.edit_text("❌ Этот токен уже добавлен.")
-            return
-
-        # Добавляем поставщика
-        logger.info(f"Adding supplier with name: {supplier_name}, token_id: {token_id}")
-        supplier_id = db.add_supplier(user_id=user_id, name=supplier_name, token_id=token_id)
-        logger.info(f"Token {token_id} and supplier {supplier_id} added successfully")
-
-        # Показываем кнопку Mini App
-        webapp_url = Config.WEBAPP_URL
-        if webapp_url and webapp_url.startswith("https://"):
-            full_url = f"{webapp_url.rstrip('/')}/webapp/index.html"
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(
-                    text="📦 Открыть Перераспределение",
-                    web_app=WebAppInfo(url=full_url)
-                )]
-            ])
-            await status_msg.edit_text(
-                f"✅ <b>Токен успешно добавлен!</b>\n\n"
-                f"📛 Магазин: {supplier_name}\n"
-                f"🆔 ID: {token_id}\n\n"
-                f"Теперь откройте Mini App для перераспределения остатков:",
-                parse_mode=ParseMode.HTML,
-                reply_markup=keyboard
-            )
-        else:
-            await status_msg.edit_text(
-                f"✅ <b>Токен добавлен!</b>\n\n"
-                f"📛 Магазин: {supplier_name}\n"
-                f"🆔 ID: {token_id}\n\n"
-                f"Используйте /redistribute",
-                parse_mode=ParseMode.HTML
-            )
-
-    except Exception as e:
-        logger.error(f"Failed to save token: {e}", exc_info=True)
-        await status_msg.edit_text(
-            f"❌ Ошибка сохранения токена.\n\n"
-            f"Попробуйте ещё раз или /token для помощи."
-        )
+    # Устанавливаем состояние ожидания телефона
+    await state.set_state(AuthStates.waiting_phone)
+    await callback.answer()
 
 
 async def main():
     """Главная функция запуска бота"""
     global db, bot
-
-    # 🚨 RAILWAY DEPLOYMENT CHECK
-    try:
-        import os
-        test_file = os.path.join(os.path.dirname(__file__), 'RAILWAY_TEST.txt')
-        if os.path.exists(test_file):
-            with open(test_file, 'r') as f:
-                content = f.read()
-                logger.warning("=" * 60)
-                logger.warning("🚨 RAILWAY DEPLOYMENT CHECK:")
-                logger.warning(content)
-                logger.warning("=" * 60)
-    except Exception as e:
-        logger.error(f"Failed to read RAILWAY_TEST.txt: {e}")
 
     # Валидация конфигурации
     Config.validate()
@@ -286,13 +196,13 @@ async def main():
     dp.message.register(cmd_help, Command("help"))
     dp.message.register(cmd_stats, Command("stats"))
 
-    # Подключение роутеров
-    dp.include_router(token_router)
-    dp.include_router(supplier_router)
-    dp.include_router(redistribution_router)
+    # Регистрация callback handlers
+    dp.callback_query.register(callback_reauth, F.data == "reauth")
 
-    # Автоматический обработчик токенов (регистрируем ПОСЛЕДНИМ как catch-all)
-    dp.message.register(handle_token_auto)
+    # Подключение роутеров
+    dp.include_router(redistribution_router)
+    dp.include_router(browser_auth_router)
+    dp.include_router(payment_router)
 
     logger.info("Handlers registered")
 
@@ -301,10 +211,9 @@ async def main():
     print(f"🤖 Бот: @mpbizai_bot")
     print(f"👤 Админ: {Config.ADMIN_IDS}")
     print("\n📝 Команды бота:")
-    print("   /start - начало работы")
-    print("   /token - добавить WB API токен")
-    print("   /suppliers - управление поставщиками")
+    print("   /start - начало работы (авторизация через SMS)")
     print("   /redistribute - перераспределить остатки")
+    print("   /balance - проверить баланс")
     print("\n⏳ Ожидание сообщений... (Ctrl+C для остановки)\n")
     print("=" * 50)
 
