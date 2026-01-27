@@ -87,7 +87,7 @@ async def process_phone(message: Message, state: FSMContext):
     await message.answer(
         f"📱 Номер: {normalized_phone}\n\n"
         f"⏳ Запрашиваю SMS код...\n"
-        f"📩 SMS придёт от <b>ВАЛБОРИС</b>\n\n"
+        f"📩 SMS придёт от <b>Wildberries</b>\n\n"
         f"Напишите 6-значный код из SMS сюда в чат.",
         parse_mode="HTML"
     )
@@ -102,7 +102,7 @@ async def process_phone(message: Message, state: FSMContext):
             await state.set_state(AuthStates.waiting_code)
             await message.answer(
                 f"✅ SMS отправлено!\n\n"
-                f"📩 Код придёт от <b>ВАЛБОРИС</b>\n"
+                f"📩 Код придёт от <b>Wildberries</b>\n"
                 f"Напишите 6 цифр из SMS:",
                 parse_mode="HTML"
             )
