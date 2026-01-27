@@ -219,27 +219,44 @@ class WBAuthService:
             phone_digits = normalized_phone.replace('+7', '').replace('+', '')
             logger.info(f"Вводим телефон: {phone_digits[:3]}***")
 
-            # ВАЖНО: НЕ кликаем на поле - это открывает dropdown выбора страны!
-            # Используем fill() напрямую - он сам фокусирует элемент
-            try:
-                # Способ 1: Прямой fill без клика
-                await phone_input.fill(phone_digits)
-                logger.info("Номер введён через fill()")
-            except Exception as e:
-                logger.warning(f"fill() не сработал: {e}, пробуем focus + type")
-                # Способ 2: focus + type (без click!)
-                await phone_input.focus()
+            # WB имеет сложный компонент: слева флаг+dropdown, справа поле ввода
+            # Нужно кликнуть СПРАВА (в область цифр), не слева (где флаг)
+
+            # Получаем координаты поля
+            box = await phone_input.bounding_box()
+            if box:
+                # Кликаем в ПРАВУЮ часть поля (70% от левого края) - там область ввода цифр
+                click_x = box['x'] + box['width'] * 0.7
+                click_y = box['y'] + box['height'] / 2
+                logger.info(f"Поле: x={box['x']}, width={box['width']}, кликаем в x={click_x}")
+
+                # Сначала кликаем вне поля чтобы закрыть возможный dropdown
+                await page.mouse.click(box['x'] + box['width'] + 50, box['y'])
                 await browser.human_delay(200, 300)
-                # Закрываем возможный dropdown
-                await page.keyboard.press('Escape')
-                await browser.human_delay(100, 200)
-                # Снова фокус и ввод
-                await phone_input.focus()
-                await phone_input.fill('')
+
+                # Теперь кликаем в правую часть поля (область ввода цифр)
+                await page.mouse.click(click_x, click_y)
+                await browser.human_delay(300, 500)
+
+                # Проверяем, открылся ли dropdown (есть ли список стран)
+                dropdown_visible = await page.query_selector('[class*="dropdown"]:visible, [class*="select-list"]:visible, [role="listbox"]:visible')
+                if dropdown_visible:
+                    logger.info("Dropdown открылся, закрываем через Escape")
+                    await page.keyboard.press('Escape')
+                    await browser.human_delay(200, 300)
+                    # Кликаем снова в правую часть
+                    await page.mouse.click(click_x, click_y)
+                    await browser.human_delay(200, 300)
+
+                # Вводим номер
                 for digit in phone_digits:
                     await page.keyboard.type(digit, delay=80)
                     await browser.human_delay(30, 80)
-                logger.info("Номер введён через focus + type")
+                logger.info("Номер введён через клик в правую часть + type")
+            else:
+                # Fallback если не получили координаты
+                logger.warning("Не удалось получить координаты поля, пробуем fill()")
+                await phone_input.fill(phone_digits)
 
             await browser.human_delay(500, 1000)
 
