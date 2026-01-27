@@ -177,47 +177,139 @@ async def process_token(message: Message, state: FSMContext):
         )
         return
 
-    # Проверяем валидность токена
-    # ВРЕМЕННО ОТКЛЮЧЕНО для тестирования - проверка WB API не работает
-    logger.warning("🚨🚨🚨 Token validation is DISABLED for testing 🚨🚨🚨")
+    # Проверяем токен и получаем информацию о поставщике
+    status_msg = await message.answer("🔄 Проверяю токен и получаю информацию о магазине...")
+    logger.info("Validating token and fetching supplier info...")
 
-    status_msg = await message.answer("⚠️ Добавляю токен без проверки (тестовый режим)...")
-    logger.info("Status message sent to user")
+    supplier_name = "Мой магазин"  # Дефолт на случай ошибки
 
-    # ЗАКОММЕНТИРОВАНО: Проверка токена
-    # try:
-    #     async with WBApiClient(token) as client:
-    #         is_valid = await client.check_token()
-    # except Exception as e:
-    #     logger.error(f"Token validation failed: {e}")
-    #     is_valid = False
-    #
-    # if not is_valid:
-    #     await status_msg.edit_text(
-    #         "❌ Токен невалиден или не имеет нужных прав.\n\n"
-    #         "Убедитесь, что токен:\n"
-    #         "• Скопирован полностью\n"
-    #         "• Не истёк срок действия\n"
-    #         "• Есть права на нужные разделы API\n\n"
-    #         "Попробуйте ещё раз или /cancel для отмены."
-    #     )
-    #     return
+    try:
+        async with WBApiClient(token) as client:
+            # Проверяем валидность токена
+            is_valid = await client.check_token()
+            logger.info(f"Token validation result: {is_valid}")
 
-    # Сохраняем токен во временное хранилище
-    await state.update_data(token=token)
-    logger.info("Token saved to FSM state")
+            if not is_valid:
+                await status_msg.edit_text(
+                    "❌ Токен невалиден или не имеет нужных прав.\n\n"
+                    "Убедитесь, что токен:\n"
+                    "• Скопирован полностью\n"
+                    "• Не истёк срок действия\n"
+                    "• Есть права на нужные разделы API\n\n"
+                    "Попробуйте ещё раз или /cancel для отмены."
+                )
+                return
 
-    await status_msg.edit_text(
-        "✅ Токен принят (без проверки)!\n\n"
-        "Введите название для этого токена (например: \"Основной\" или \"Магазин 1\"):\n\n"
-        "Или отправьте /skip для имени по умолчанию."
-    )
-    logger.info("Waiting for supplier name...")
-    await state.set_state(TokenStates.waiting_for_name)
+            # Получаем информацию о поставщике
+            logger.info("Fetching supplier info from WB API...")
+            supplier_info = await client.get_supplier_info()
+            if supplier_info and supplier_info.get("name"):
+                supplier_name = supplier_info["name"]
+                logger.info(f"Got supplier name from API: {supplier_name}")
+            else:
+                logger.warning("Failed to get supplier name, using default")
+
+    except Exception as e:
+        logger.error(f"Token validation/info fetch failed: {e}", exc_info=True)
+        # Продолжаем с дефолтным именем
+        logger.info(f"Continuing with default name: {supplier_name}")
+
+    # Сохраняем токен и название в БД СРАЗУ
+    logger.info(f"Saving token with name: {supplier_name}")
+    user_id = message.from_user.id
+    db = get_db()
+
+    try:
+        encrypted = encrypt_token(token)
+        token_id = db.add_wb_token(user_id, encrypted, supplier_name)
+
+        if not token_id:
+            await status_msg.edit_text(
+                "❌ Этот токен уже добавлен.\n\n"
+                "Используйте /token для управления токенами."
+            )
+            await state.clear()
+            return
+
+        logger.info(f"Token added successfully: token_id={token_id}, name={supplier_name}")
+
+        # Добавляем поставщика автоматически
+        try:
+            supplier_id = db.add_supplier(
+                user_id=user_id,
+                name=supplier_name,
+                token_id=token_id
+            )
+            logger.info(f"Supplier added: supplier_id={supplier_id}")
+        except Exception as e:
+            logger.error(f"Failed to add supplier: {e}")
+            await status_msg.edit_text(
+                f"⚠️ Токен добавлен, но не удалось создать поставщика.\n\n"
+                f"Ошибка: {str(e)}\n\n"
+                f"Используйте /token для повторной попытки."
+            )
+            await state.clear()
+            return
+
+        # Показываем кнопку Mini App
+        webapp_url = Config.WEBAPP_URL
+        logger.info(f"WEBAPP_URL: {webapp_url}")
+
+        if not webapp_url or not webapp_url.startswith("https://"):
+            logger.warning(f"WEBAPP_URL not HTTPS: {webapp_url}")
+            await status_msg.edit_text(
+                f"✅ <b>Токен успешно добавлен!</b>\n\n"
+                f"📛 Название: {supplier_name}\n"
+                f"🆔 ID: {token_id}\n\n"
+                f"Используйте команды:\n"
+                f"📦 /redistribute - создать заявку\n"
+                f"🏪 /suppliers - управление поставщиками",
+                parse_mode='HTML'
+            )
+        else:
+            try:
+                full_url = f"{webapp_url.rstrip('/')}/webapp/index.html"
+                logger.info(f"Mini App URL: {full_url}")
+
+                keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(
+                        text="📦 Открыть Перераспределение",
+                        web_app=WebAppInfo(url=full_url)
+                    )]
+                ])
+
+                await status_msg.edit_text(
+                    f"✅ <b>Токен успешно добавлен!</b>\n\n"
+                    f"📛 Название: {supplier_name}\n"
+                    f"🆔 ID: {token_id}\n\n"
+                    f"Теперь вы можете открыть Mini App для перераспределения остатков:",
+                    parse_mode='HTML',
+                    reply_markup=keyboard
+                )
+                logger.info("Message sent successfully!")
+            except Exception as e:
+                logger.error(f"Failed to send Mini App button: {e}", exc_info=True)
+                await status_msg.edit_text(
+                    f"✅ <b>Токен успешно добавлен!</b>\n\n"
+                    f"📛 Название: {supplier_name}\n"
+                    f"🆔 ID: {token_id}\n\n"
+                    f"📦 /redistribute - создать заявку",
+                    parse_mode='HTML'
+                )
+
+    except Exception as e:
+        logger.error(f"Failed to save token: {e}", exc_info=True)
+        await status_msg.edit_text(
+            f"❌ Ошибка сохранения токена.\n\n"
+            f"Детали: {str(e)[:100]}"
+        )
+
+    await state.clear()
 
 
-@router.message(TokenStates.waiting_for_name)
-async def process_token_name(message: Message, state: FSMContext):
+# УДАЛЕНО: Обработчик waiting_for_name больше не нужен - название получаем автоматически из WB API
+# @router.message(TokenStates.waiting_for_name)
+async def _old_process_token_name(message: Message, state: FSMContext):
     """Обработка названия токена"""
     logger.info(f"=== PROCESS_TOKEN_NAME CALLED === User: {message.from_user.id}")
     logger.info(f"Received name: {message.text}")

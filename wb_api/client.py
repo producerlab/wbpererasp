@@ -332,3 +332,53 @@ class WBApiClient:
             # В случае других ошибок (сеть и т.д.) считаем токен валидным
             # чтобы не блокировать пользователя
             return True
+
+    async def get_supplier_info(self) -> Optional[Dict[str, Any]]:
+        """
+        Получает информацию о поставщике (владельце токена).
+
+        Returns:
+            Dict с информацией: {"name": "Название магазина", "inn": "ИНН", ...}
+            None если не удалось получить
+        """
+        try:
+            # Пробуем разные endpoints для получения информации
+            # 1. Пробуем получить информацию через список офисов
+            try:
+                response = await self.get("/api/v3/offices", Endpoint.WAREHOUSES)
+                if response and len(response) > 0:
+                    office = response[0]
+                    return {
+                        "name": office.get("name", "Неизвестный поставщик"),
+                        "id": office.get("id"),
+                        "address": office.get("address")
+                    }
+            except Exception as e:
+                logger.debug(f"Failed to get offices: {e}")
+
+            # 2. Пробуем получить через склады (обычно содержат название продавца)
+            try:
+                warehouses = await self.get("/api/v1/warehouses", Endpoint.WAREHOUSES)
+                if warehouses and len(warehouses) > 0:
+                    # Берём первый склад и извлекаем название
+                    first_wh = warehouses[0]
+                    # Обычно название склада содержит название магазина
+                    wh_name = first_wh.get("name", "")
+                    if wh_name:
+                        # Пробуем извлечь название магазина из названия склада
+                        # Например: "Магазин ООО - Склад Коледино" -> "Магазин ООО"
+                        parts = wh_name.split("-")
+                        supplier_name = parts[0].strip() if parts else wh_name
+                        return {
+                            "name": supplier_name[:50],  # Ограничиваем длину
+                            "warehouse_count": len(warehouses)
+                        }
+            except Exception as e:
+                logger.debug(f"Failed to get warehouses: {e}")
+
+            # 3. Если ничего не получилось - возвращаем дефолтное имя
+            return {"name": "Мой магазин"}
+
+        except Exception as e:
+            logger.error(f"Failed to get supplier info: {e}")
+            return None
