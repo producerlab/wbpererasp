@@ -295,11 +295,7 @@ class Database:
         """Удаляет токен полностью"""
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            # Сначала удаляем связанные подписки
-            cursor.execute('''
-                DELETE FROM monitoring_subscriptions WHERE token_id = ?
-            ''', (token_id,))
-            # Затем сам токен
+            # Удаляем токен
             cursor.execute('''
                 DELETE FROM wb_api_tokens WHERE id = ?
             ''', (token_id,))
@@ -316,10 +312,6 @@ class Database:
             ''', (token_id, user_id))
             if not cursor.fetchone():
                 return False
-            # Удаляем связанные подписки
-            cursor.execute('''
-                DELETE FROM monitoring_subscriptions WHERE token_id = ?
-            ''', (token_id,))
             # Удаляем токен
             cursor.execute('''
                 DELETE FROM wb_api_tokens WHERE id = ? AND user_id = ?
@@ -410,25 +402,13 @@ class Database:
             cursor.execute('SELECT COUNT(*) FROM wb_api_tokens WHERE is_active = 1')
             total_tokens = cursor.fetchone()[0]
 
-            cursor.execute(
-                'SELECT COUNT(*) FROM monitoring_subscriptions WHERE is_active = 1'
-            )
-            total_subscriptions = cursor.fetchone()[0]
-
-            cursor.execute('SELECT COUNT(*) FROM slot_bookings')
-            total_bookings = cursor.fetchone()[0]
-
-            cursor.execute(
-                "SELECT COUNT(*) FROM slot_bookings WHERE status = 'confirmed'"
-            )
-            successful_bookings = cursor.fetchone()[0]
+            cursor.execute('SELECT COUNT(*) FROM redistribution_requests')
+            total_requests = cursor.fetchone()[0]
 
             return {
                 'total_users': total_users,
                 'total_tokens': total_tokens,
-                'total_subscriptions': total_subscriptions,
-                'total_bookings': total_bookings,
-                'successful_bookings': successful_bookings
+                'total_requests': total_requests
             }
 
     # ==================== SUPPLIERS ====================
@@ -528,13 +508,6 @@ class Database:
             ''', (supplier_id,))
             redistributions_count = cursor.fetchone()[0]
 
-            cursor.execute('''
-                SELECT COUNT(*) FROM slot_bookings sb
-                JOIN suppliers s ON sb.token_id = s.token_id
-                WHERE s.id = ?
-            ''', (supplier_id,))
-            bookings_count = cursor.fetchone()[0]
-
             # Последняя активность - берем из last_used токена
             cursor.execute('''
                 SELECT t.last_used
@@ -546,9 +519,8 @@ class Database:
             last_used = dict(row)['last_used'] if row else None
 
             return {
-                'operations_count': redistributions_count + bookings_count,
+                'operations_count': redistributions_count,
                 'redistributions_count': redistributions_count,
-                'bookings_count': bookings_count,
                 'last_used': last_used or 'никогда'
             }
 

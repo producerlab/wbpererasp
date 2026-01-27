@@ -113,7 +113,6 @@ async def callback_supplier_settings(callback: CallbackQuery):
 
 <b>Статистика:</b>
 • Всего операций: {stats['operations_count']}
-• Бронирований: {stats['bookings_count']}
 • Перераспределений: {stats['redistributions_count']}
 • Последняя активность: {stats['last_used']}
 

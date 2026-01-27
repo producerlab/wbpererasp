@@ -17,7 +17,6 @@ from wb_api.client import WBApiClient
 from wb_api.stocks import StocksAPI, StockItem, StocksByWarehouse
 from wb_api.supplies import SuppliesAPI, BookingResult, CargoType
 from wb_api.warehouses import WarehousesAPI
-from wb_api.coefficients import CoefficientsAPI
 
 logger = logging.getLogger(__name__)
 
@@ -118,44 +117,9 @@ class RedistributionService:
 
         return 0
 
-    async def get_target_warehouse_coefficient(
-        self,
-        api_token: str,
-        warehouse_id: int,
-        target_date: Optional[date] = None
-    ) -> Optional[float]:
-        """
-        Получает коэффициент для склада-назначения.
-
-        Args:
-            api_token: WB API токен
-            warehouse_id: ID склада
-            target_date: Целевая дата
-
-        Returns:
-            Коэффициент или None
-        """
-        async with WBApiClient(api_token) as client:
-            api = CoefficientsAPI(client)
-            coefficients = await api.get_acceptance_coefficients([warehouse_id])
-
-            if not coefficients:
-                return None
-
-            # Ищем ближайшую доступную дату
-            available = [c for c in coefficients if c.is_available]
-            if not available:
-                return None
-
-            # Если есть целевая дата - ищем её
-            if target_date:
-                for c in available:
-                    if c.date == target_date:
-                        return c.coefficient
-
-            # Иначе берём ближайшую
-            sorted_coeffs = sorted(available, key=lambda x: x.date)
-            return sorted_coeffs[0].coefficient if sorted_coeffs else None
+    # МЕТОД УДАЛЁН - мониторинг коэффициентов отключён
+    # async def get_target_warehouse_coefficient(...):
+    #     pass
 
     async def validate_redistribution(
         self,
@@ -232,11 +196,8 @@ class RedistributionService:
         request.source_warehouse_name = source_name
         request.target_warehouse_name = target_name
 
-        # Получаем коэффициент
-        coefficient = await self.get_target_warehouse_coefficient(
-            api_token,
-            request.target_warehouse_id
-        )
+        # Коэффициенты отключены (мониторинг удалён)
+        coefficient = None
 
         try:
             async with WBApiClient(api_token) as client:
