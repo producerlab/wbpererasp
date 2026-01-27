@@ -217,7 +217,11 @@ class WBAuthService:
 
             # Вводим номер телефона (без +7, т.к. на странице WB уже есть префикс +7)
             phone_digits = normalized_phone.replace('+7', '').replace('+', '')
-            logger.info(f"Вводим телефон: {phone_digits[:3]}***")
+            logger.info(f"Будем вводить: {phone_digits[:3]}*** ({len(phone_digits)} цифр)")
+
+            # Проверяем начальное значение поля
+            initial_value = await phone_input.input_value()
+            logger.info(f"Начальное значение в поле: '{initial_value}'")
 
             # WB имеет сложный компонент: слева флаг+dropdown, справа поле ввода
             # Нужно кликнуть СПРАВА (в область цифр), не слева (где флаг)
@@ -248,11 +252,25 @@ class WBAuthService:
                     await page.mouse.click(click_x, click_y)
                     await browser.human_delay(200, 300)
 
-                # Вводим номер
-                for digit in phone_digits:
-                    await page.keyboard.type(digit, delay=80)
-                    await browser.human_delay(30, 80)
-                logger.info("Номер введён через клик в правую часть + type")
+                # Очищаем поле перед вводом (на случай если там что-то было)
+                await page.keyboard.press('Control+a')
+                await browser.human_delay(50, 100)
+                await page.keyboard.press('Backspace')
+                await browser.human_delay(100, 200)
+
+                # Вводим номер МЕДЛЕННО, цифра за цифрой
+                logger.info("Начинаем ввод номера...")
+                for i, digit in enumerate(phone_digits):
+                    await page.keyboard.type(digit, delay=120)
+                    await browser.human_delay(50, 100)
+                    # Каждые 3 цифры делаем паузу
+                    if (i + 1) % 3 == 0:
+                        await browser.human_delay(150, 250)
+
+                logger.info("Номер введён")
+
+                # Ждём пока WB отформатирует номер
+                await browser.human_delay(500, 800)
             else:
                 # Fallback если не получили координаты
                 logger.warning("Не удалось получить координаты поля, пробуем fill()")
@@ -264,45 +282,89 @@ class WBAuthService:
             input_value = await phone_input.input_value()
             logger.info(f"Значение в поле после ввода: '{input_value}'")
 
-            # Закрываем dropdown если он открылся при вводе
-            await page.keyboard.press('Escape')
-            await browser.human_delay(300, 500)
-
-            # Пробуем отправить форму несколькими способами
-            submitted = False
-
-            # Способ 1: Нажать Enter (самый надёжный для форм)
-            logger.info("Отправка формы через Enter")
-            await page.keyboard.press('Enter')
-            await browser.human_delay(2000, 3000)
-
-            # Проверяем, появилось ли поле кода
-            code_input = await self._find_code_input(page)
-            if code_input:
-                submitted = True
-                logger.info("Форма отправлена через Enter")
-
-            # Способ 2: Если Enter не сработал, ищем и кликаем кнопку
-            if not submitted:
-                logger.info("Enter не сработал, пробуем кнопку")
-                # Закрываем dropdown снова
-                await page.keyboard.press('Escape')
+            # ВАЖНО: НЕ нажимаем Escape здесь - это может очистить поле!
+            # Вместо этого просто кликаем вне поля чтобы убрать фокус с input
+            box = await phone_input.bounding_box()
+            if box:
+                # Кликаем ниже поля (вне dropdown области)
+                await page.mouse.click(box['x'] + box['width'] / 2, box['y'] + box['height'] + 30)
                 await browser.human_delay(200, 300)
 
-                submit_button = await self._find_submit_button(page)
-                if submit_button:
-                    # Кликаем по координатам кнопки (не просто click)
-                    button_box = await submit_button.bounding_box()
-                    if button_box:
-                        btn_x = button_box['x'] + button_box['width'] / 2
-                        btn_y = button_box['y'] + button_box['height'] / 2
-                        logger.info(f"Кликаем кнопку по координатам: x={btn_x}, y={btn_y}")
-                        await page.mouse.click(btn_x, btn_y)
-                    else:
-                        await submit_button.click()
-                    await browser.human_delay(2000, 3000)
+            # Перепроверяем значение после клика вне поля
+            input_value_after = await phone_input.input_value()
+            logger.info(f"Значение в поле после клика вне: '{input_value_after}'")
 
-            # Проверяем ошибки
+            if not input_value_after or len(input_value_after.replace(' ', '').replace('-', '')) < 10:
+                logger.error(f"Номер был очищен или не полный! Было: '{input_value}', стало: '{input_value_after}'")
+                session.status = AuthStatus.FAILED
+                session.error_message = "Номер телефона не сохранился в поле. Попробуйте ещё раз."
+                return session
+
+            # Пробуем отправить форму - сначала кнопкой (надёжнее чем Enter)
+            submitted = False
+
+            # Способ 1: Клик по кнопке "Получить код" / "Войти"
+            submit_button = await self._find_submit_button(page)
+            if submit_button:
+                # Проверяем текст кнопки
+                button_text = await submit_button.inner_text()
+                logger.info(f"Найдена кнопка: '{button_text}'")
+
+                # Кликаем по координатам кнопки
+                button_box = await submit_button.bounding_box()
+                if button_box:
+                    btn_x = button_box['x'] + button_box['width'] / 2
+                    btn_y = button_box['y'] + button_box['height'] / 2
+                    logger.info(f"Кликаем кнопку по координатам: x={btn_x}, y={btn_y}")
+                    await page.mouse.click(btn_x, btn_y)
+                else:
+                    await submit_button.click()
+                await browser.human_delay(3000, 4000)
+
+                # Проверяем, появилось ли поле кода
+                code_input = await self._find_code_input(page)
+                if code_input:
+                    submitted = True
+                    logger.info("Форма отправлена через кнопку")
+
+            # Способ 2: Если кнопка не сработала, пробуем Enter
+            if not submitted:
+                logger.info("Кнопка не сработала, пробуем Enter")
+                # Сначала кликаем в поле ввода чтобы дать ему фокус
+                if box:
+                    await page.mouse.click(box['x'] + box['width'] * 0.7, box['y'] + box['height'] / 2)
+                    await browser.human_delay(200, 300)
+
+                await page.keyboard.press('Enter')
+                await browser.human_delay(3000, 4000)
+
+            # ДИАГНОСТИКА: Проверяем состояние страницы после submit
+            body_text = await page.inner_text('body')
+            logger.info(f"=== ДИАГНОСТИКА ПОСЛЕ SUBMIT ===")
+            logger.info(f"URL: {page.url}")
+            logger.info(f"Текст страницы (первые 400 символов): {body_text[:400]}")
+
+            # Проверяем, есть ли поле телефона и что в нём
+            phone_field_after = await self._find_phone_input(page)
+            if phone_field_after:
+                value_after_submit = await phone_field_after.input_value()
+                logger.info(f"Значение в поле телефона ПОСЛЕ SUBMIT: '{value_after_submit}'")
+                if not value_after_submit or len(value_after_submit.replace(' ', '').replace('-', '')) < 10:
+                    logger.error("!!! ПРОБЛЕМА: Номер был очищен после клика на кнопку!")
+
+            # Сохраняем скриншот в файл для визуальной диагностики
+            try:
+                screenshot = await browser.take_screenshot(page)
+                if screenshot:
+                    import os
+                    screenshot_path = "/tmp/wb_auth_debug.png"
+                    with open(screenshot_path, "wb") as f:
+                        f.write(screenshot)
+                    logger.info(f"Скриншот сохранён: {screenshot_path}")
+            except Exception as e:
+                logger.warning(f"Не удалось сохранить скриншот: {e}")
+
+            # Проверяем ошибки на странице
             error = await self._check_error(page)
             if error:
                 session.status = AuthStatus.FAILED
@@ -316,29 +378,18 @@ class WBAuthService:
                 session.status = AuthStatus.PENDING_CODE
                 logger.info(f"SMS отправлено на {normalized_phone[:5]}***")
             else:
-                # Диагностика: что на странице после нажатия кнопки?
-                current_url = page.url
-                page_title = await page.title()
-                page_content = await page.content()
+                # Ещё одна попытка - ждём дольше
+                logger.info("Поле кода не найдено, ждём ещё 3 секунды...")
+                await browser.human_delay(3000, 4000)
+                code_input = await self._find_code_input(page)
 
-                logger.error(f"После submit: URL={current_url}")
-                logger.error(f"После submit: title={page_title}")
-                logger.error(f"После submit: HTML length={len(page_content)}")
-
-                # Проверяем, есть ли на странице текст ошибки или капча
-                body_text = await page.inner_text('body')
-                if body_text:
-                    # Логируем первые 500 символов текста страницы
-                    logger.error(f"Page text (first 500): {body_text[:500]}")
-
-                # Делаем скриншот для диагностики
-                screenshot = await browser.take_screenshot(page)
-                if screenshot:
-                    logger.error("Screenshot saved for diagnosis")
-
-                session.status = AuthStatus.FAILED
-                session.error_message = "Не появилось поле для ввода кода. Возможно, WB показал капчу или ошибку."
-                logger.error(session.error_message)
+                if code_input:
+                    session.status = AuthStatus.PENDING_CODE
+                    logger.info(f"SMS отправлено на {normalized_phone[:5]}*** (после дополнительного ожидания)")
+                else:
+                    session.status = AuthStatus.FAILED
+                    session.error_message = "Не появилось поле для ввода кода. Возможно, WB показал капчу или ошибку."
+                    logger.error(session.error_message)
 
             return session
 
