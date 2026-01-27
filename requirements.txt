@@ -18,7 +18,6 @@ tenacity==8.2.3
 
 # Redis (optional, for caching)
 redis==5.0.1
-aioredis==2.0.1
 
 # Scheduler (optional, for background tasks)
 apscheduler==3.10.4
