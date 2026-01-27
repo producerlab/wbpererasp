@@ -239,8 +239,28 @@ class WBAuthService:
                 session.status = AuthStatus.PENDING_CODE
                 logger.info(f"SMS отправлено на {normalized_phone[:5]}***")
             else:
+                # Диагностика: что на странице после нажатия кнопки?
+                current_url = page.url
+                page_title = await page.title()
+                page_content = await page.content()
+
+                logger.error(f"После submit: URL={current_url}")
+                logger.error(f"После submit: title={page_title}")
+                logger.error(f"После submit: HTML length={len(page_content)}")
+
+                # Проверяем, есть ли на странице текст ошибки или капча
+                body_text = await page.inner_text('body')
+                if body_text:
+                    # Логируем первые 500 символов текста страницы
+                    logger.error(f"Page text (first 500): {body_text[:500]}")
+
+                # Делаем скриншот для диагностики
+                screenshot = await browser.take_screenshot(page)
+                if screenshot:
+                    logger.error("Screenshot saved for diagnosis")
+
                 session.status = AuthStatus.FAILED
-                session.error_message = "Не удалось отправить SMS. Попробуйте позже."
+                session.error_message = "Не появилось поле для ввода кода. Возможно, WB показал капчу или ошибку."
                 logger.error(session.error_message)
 
             return session
