@@ -239,31 +239,45 @@ async def process_token_name(message: Message, state: FSMContext):
             token_id=token_id
         )
 
-        # Показываем кнопку Mini App после успешного добавления токена
-        webapp_url = Config.WEBAPP_URL
-        if not webapp_url.endswith('/'):
-            webapp_url += '/'
+        try:
+            # Показываем кнопку Mini App после успешного добавления токена
+            webapp_url = Config.WEBAPP_URL
+            if not webapp_url.endswith('/'):
+                webapp_url += '/'
 
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="📦 Открыть Перераспределение",
-                    web_app=WebAppInfo(url=f"{webapp_url}webapp/index.html")
-                )
-            ]
-        ])
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="📦 Открыть Перераспределение",
+                        web_app=WebAppInfo(url=f"{webapp_url}webapp/index.html")
+                    )
+                ]
+            ])
 
-        await message.answer(
-            f"✅ <b>Токен успешно добавлен!</b>\n\n"
-            f"📛 Название: {name}\n"
-            f"🆔 ID: {token_id}\n\n"
-            f"Теперь вы можете:\n"
-            f"📦 Открыть Mini App для перераспределения остатков (кнопка ниже)\n"
-            f"🏪 /suppliers - управление поставщиками\n"
-            f"📦 /redistribute - создать заявку на перемещение",
-            parse_mode='HTML',
-            reply_markup=keyboard
-        )
+            await message.answer(
+                f"✅ <b>Токен успешно добавлен!</b>\n\n"
+                f"📛 Название: {name}\n"
+                f"🆔 ID: {token_id}\n\n"
+                f"Теперь вы можете:\n"
+                f"📦 Открыть Mini App для перераспределения остатков (кнопка ниже)\n"
+                f"🏪 /suppliers - управление поставщиками\n"
+                f"📦 /redistribute - создать заявку на перемещение",
+                parse_mode='HTML',
+                reply_markup=keyboard
+            )
+        except Exception as e:
+            logger.error(f"Failed to send message with Mini App button: {e}")
+            # Отправляем сообщение без кнопки
+            await message.answer(
+                f"✅ <b>Токен успешно добавлен!</b>\n\n"
+                f"📛 Название: {name}\n"
+                f"🆔 ID: {token_id}\n\n"
+                f"Используйте команды:\n"
+                f"📦 /redistribute - создать заявку на перемещение\n"
+                f"🏪 /suppliers - управление поставщиками\n\n"
+                f"⚠️ Mini App временно недоступен (ошибка: {str(e)[:100]})",
+                parse_mode='HTML'
+            )
     else:
         await message.answer(
             "❌ Этот токен уже добавлен.\n\n"
