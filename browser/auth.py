@@ -550,12 +550,40 @@ class WBAuthService:
     async def _find_code_input(self, page: Page) -> Optional[Any]:
         """Найти поле ввода SMS кода"""
         try:
-            return await page.wait_for_selector(
+            # Сначала проверим текст страницы - есть ли сообщение об отправке кода
+            body_text = await page.inner_text('body')
+            has_code_text = any(phrase in body_text.lower() for phrase in [
+                'введите код', 'enter code', 'код из sms', 'код подтверждения',
+                'отправили код', 'отправлен код', 'мы отправили'
+            ])
+            logger.info(f"Текст страницы содержит упоминание кода: {has_code_text}")
+            if not has_code_text:
+                logger.warning("На странице нет текста о вводе кода - возможно форма не отправилась")
+                # Логируем первые 300 символов для диагностики
+                logger.info(f"Текст страницы: {body_text[:300]}")
+
+            element = await page.wait_for_selector(
                 self.SELECTORS['code_input'],
                 timeout=10000,
                 state='visible'
             )
+
+            if element:
+                # Диагностика: что за элемент нашли
+                placeholder = await element.get_attribute('placeholder') or ''
+                maxlength = await element.get_attribute('maxlength') or ''
+                input_type = await element.get_attribute('type') or ''
+                value = await element.input_value()
+                logger.info(f"Найдено поле кода: type={input_type}, maxlength={maxlength}, placeholder='{placeholder}', value='{value}'")
+
+                # Если в поле уже есть значение (номер телефона) - это НЕ поле кода!
+                if value and len(value) > 6:
+                    logger.warning(f"Поле содержит значение '{value}' - это поле телефона, не кода!")
+                    return None
+
+            return element
         except PlaywrightTimeout:
+            logger.warning("Timeout при поиске поля кода - поле не появилось")
             return None
 
     async def _find_submit_button(self, page: Page) -> Optional[Any]:
