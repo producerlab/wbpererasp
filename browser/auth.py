@@ -215,8 +215,10 @@ class WBAuthService:
                 logger.error(session.error_message)
                 return session
 
-            # Вводим номер телефона
-            await browser.human_type(page, self.SELECTORS['phone_input'], normalized_phone)
+            # Вводим номер телефона (без +7, т.к. на странице WB уже есть префикс +7)
+            phone_digits = normalized_phone.replace('+7', '').replace('+', '')
+            logger.info(f"Вводим телефон: {phone_digits[:3]}***")
+            await browser.human_type(page, self.SELECTORS['phone_input'], phone_digits)
             await browser.human_delay(500, 1000)
 
             # Нажимаем кнопку отправки
