@@ -13,8 +13,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Копируем весь код
 COPY . .
 
-# Делаем скрипт исполняемым
-RUN chmod +x /app/start.sh
-
-# Запускаем оба сервиса
-CMD ["/app/start.sh"]
+# Пока запускаем ТОЛЬКО бота (без FastAPI для отладки)
+CMD ["python3", "-u", "bot.py"]
