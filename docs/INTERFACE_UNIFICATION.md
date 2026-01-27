@@ -405,4 +405,3 @@ createBulkRedistribution([
 **Автор**: Claude Code
 **Связанные документы**:
 - [План архитектурных улучшений](../../.claude/plans/lucky-orbiting-summit.md)
-- [MONITORING.md](../MONITORING.md)
