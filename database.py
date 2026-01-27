@@ -130,16 +130,12 @@ class Database:
                 ON wb_api_tokens(user_id)
             ''')
             cursor.execute('''
-                CREATE INDEX IF NOT EXISTS idx_subscriptions_user
-                ON monitoring_subscriptions(user_id)
+                CREATE INDEX IF NOT EXISTS idx_suppliers_user
+                ON suppliers(user_id)
             ''')
             cursor.execute('''
-                CREATE INDEX IF NOT EXISTS idx_bookings_user
-                ON slot_bookings(user_id)
-            ''')
-            cursor.execute('''
-                CREATE INDEX IF NOT EXISTS idx_coeff_history_warehouse
-                ON coefficient_history(warehouse_id, date)
+                CREATE INDEX IF NOT EXISTS idx_redistribution_user
+                ON redistribution_requests(user_id, status)
             ''')
 
             logger.info("Database initialized successfully")
