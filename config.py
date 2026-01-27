@@ -74,6 +74,17 @@ class Config:
                 "   Сгенерируйте новый ключ: python scripts/setup.py"
             )
 
+        # Проверка WEBAPP_URL - Telegram требует HTTPS для Mini App
+        if cls.WEBAPP_URL:
+            if not cls.WEBAPP_URL.startswith("https://"):
+                warnings.append(
+                    f"⚠️ WEBAPP_URL ({cls.WEBAPP_URL}) не использует HTTPS!\n"
+                    "   Mini App кнопки НЕ будут работать в Telegram.\n"
+                    "   Установите WEBAPP_URL с HTTPS (например: https://your-app.railway.app)"
+                )
+        else:
+            warnings.append("WEBAPP_URL не задан - Mini App будет недоступен")
+
         if warnings:
             import logging
             logger = logging.getLogger(__name__)

@@ -232,8 +232,29 @@ async def process_token_name(message: Message, state: FSMContext):
     db = get_db()
     user_id = message.from_user.id
 
-    encrypted = encrypt_token(token)
-    token_id = db.add_wb_token(user_id, encrypted, name)
+    try:
+        encrypted = encrypt_token(token)
+    except Exception as e:
+        logger.error(f"Token encryption failed: {e}", exc_info=True)
+        await message.answer(
+            f"❌ Ошибка шифрования токена.\n\n"
+            f"Обратитесь к администратору.\n"
+            f"Детали: {str(e)[:100]}"
+        )
+        await state.clear()
+        return
+
+    try:
+        token_id = db.add_wb_token(user_id, encrypted, name)
+    except Exception as e:
+        logger.error(f"Failed to save token to DB: {e}", exc_info=True)
+        await message.answer(
+            f"❌ Ошибка сохранения токена в базу данных.\n\n"
+            f"Попробуйте позже.\n"
+            f"Детали: {str(e)[:100]}"
+        )
+        await state.clear()
+        return
 
     if token_id:
         logger.info(f"Token added successfully: token_id={token_id}, name={name}")
@@ -256,42 +277,13 @@ async def process_token_name(message: Message, state: FSMContext):
             await state.clear()
             return
 
-        try:
-            # Показываем кнопку Mini App после успешного добавления токена
-            webapp_url = Config.WEBAPP_URL
-            logger.info(f"WEBAPP_URL from config: {webapp_url}")
+        # Показываем кнопку Mini App после успешного добавления токена
+        webapp_url = Config.WEBAPP_URL
+        logger.info(f"WEBAPP_URL from config: {webapp_url}")
 
-            if not webapp_url.endswith('/'):
-                webapp_url += '/'
-
-            full_url = f"{webapp_url}webapp/index.html"
-            logger.info(f"Full Mini App URL: {full_url}")
-
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="📦 Открыть Перераспределение",
-                        web_app=WebAppInfo(url=full_url)
-                    )
-                ]
-            ])
-
-            logger.info("Sending message with Mini App button...")
-            await message.answer(
-                f"✅ <b>Токен успешно добавлен!</b>\n\n"
-                f"📛 Название: {name}\n"
-                f"🆔 ID: {token_id}\n\n"
-                f"Теперь вы можете:\n"
-                f"📦 Открыть Mini App для перераспределения остатков (кнопка ниже)\n"
-                f"🏪 /suppliers - управление поставщиками\n"
-                f"📦 /redistribute - создать заявку на перемещение",
-                parse_mode='HTML',
-                reply_markup=keyboard
-            )
-            logger.info("Message sent successfully!")
-        except Exception as e:
-            logger.error(f"Failed to send message with Mini App button: {e}", exc_info=True)
-            # Отправляем сообщение без кнопки
+        # Проверяем HTTPS - Telegram требует HTTPS для Mini App
+        if not webapp_url or not webapp_url.startswith("https://"):
+            logger.warning(f"WEBAPP_URL is not HTTPS: {webapp_url} - sending fallback message")
             await message.answer(
                 f"✅ <b>Токен успешно добавлен!</b>\n\n"
                 f"📛 Название: {name}\n"
@@ -299,9 +291,52 @@ async def process_token_name(message: Message, state: FSMContext):
                 f"Используйте команды:\n"
                 f"📦 /redistribute - создать заявку на перемещение\n"
                 f"🏪 /suppliers - управление поставщиками\n\n"
-                f"⚠️ Mini App временно недоступен (ошибка: {str(e)[:100]})",
+                f"⚠️ Mini App требует настройки HTTPS на сервере",
                 parse_mode='HTML'
             )
+        else:
+            try:
+                if not webapp_url.endswith('/'):
+                    webapp_url += '/'
+
+                full_url = f"{webapp_url}webapp/index.html"
+                logger.info(f"Full Mini App URL: {full_url}")
+
+                keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="📦 Открыть Перераспределение",
+                            web_app=WebAppInfo(url=full_url)
+                        )
+                    ]
+                ])
+
+                logger.info("Sending message with Mini App button...")
+                await message.answer(
+                    f"✅ <b>Токен успешно добавлен!</b>\n\n"
+                    f"📛 Название: {name}\n"
+                    f"🆔 ID: {token_id}\n\n"
+                    f"Теперь вы можете:\n"
+                    f"📦 Открыть Mini App для перераспределения остатков (кнопка ниже)\n"
+                    f"🏪 /suppliers - управление поставщиками\n"
+                    f"📦 /redistribute - создать заявку на перемещение",
+                    parse_mode='HTML',
+                    reply_markup=keyboard
+                )
+                logger.info("Message sent successfully!")
+            except Exception as e:
+                logger.error(f"Failed to send message with Mini App button: {e}", exc_info=True)
+                # Отправляем сообщение без кнопки
+                await message.answer(
+                    f"✅ <b>Токен успешно добавлен!</b>\n\n"
+                    f"📛 Название: {name}\n"
+                    f"🆔 ID: {token_id}\n\n"
+                    f"Используйте команды:\n"
+                    f"📦 /redistribute - создать заявку на перемещение\n"
+                    f"🏪 /suppliers - управление поставщиками\n\n"
+                    f"⚠️ Mini App временно недоступен",
+                    parse_mode='HTML'
+                )
     else:
         await message.answer(
             "❌ Этот токен уже добавлен.\n\n"
