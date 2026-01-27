@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from typing import Dict, Optional
 
 from config import Config
-from database import Database
+from db_factory import get_database
 from api.auth import validate_telegram_web_app_data
 
 logger = logging.getLogger(__name__)
@@ -52,9 +52,9 @@ async def get_current_user(
 
 
 # Dependency для БД
-def get_db() -> Database:
-    """Возвращает экземпляр базы данных"""
-    return Database(Config.DATABASE_PATH)
+def get_db():
+    """Возвращает экземпляр базы данных (SQLite или PostgreSQL)"""
+    return get_database()
 
 
 @app.get("/")

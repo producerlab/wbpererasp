@@ -15,10 +15,10 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 
-from database import Database
 from wb_api.client import WBApiClient
 from utils.encryption import encrypt_token
 from config import Config
+from db_factory import get_database
 
 logger = logging.getLogger(__name__)
 
@@ -31,10 +31,9 @@ class TokenStates(StatesGroup):
     waiting_for_name = State()
 
 
-def get_db() -> Database:
-    """Получает экземпляр БД (будет инжектиться)"""
-    from config import Config
-    return Database(Config.DATABASE_PATH)
+def get_db():
+    """Получает экземпляр БД (SQLite или PostgreSQL)"""
+    return get_database()
 
 
 @router.message(Command("token"))

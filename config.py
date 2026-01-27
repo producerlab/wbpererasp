@@ -28,7 +28,8 @@ class Config:
     WEBAPP_URL: str = os.getenv('WEBAPP_URL', 'http://localhost:8080')
 
     # ========== DATABASE ==========
-    DATABASE_PATH: str = os.getenv('DATABASE_PATH', 'bot_data.db')
+    DATABASE_URL: str = os.getenv('DATABASE_URL', '')  # PostgreSQL URL (Railway)
+    DATABASE_PATH: str = os.getenv('DATABASE_PATH', 'bot_data.db')  # SQLite fallback
 
     # ========== WB API ==========
     WB_API_BASE_URL: str = os.getenv(

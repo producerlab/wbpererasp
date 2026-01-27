@@ -20,7 +20,7 @@ from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, W
 from aiogram.client.default import DefaultBotProperties
 
 from config import Config
-from database import Database
+from db_factory import get_database
 from handlers import token_router, supplier_router, monitoring_router, booking_router, redistribution_router
 from services.coefficient_monitor import CoefficientMonitor, MonitoringEvent
 from services.notification_service import NotificationService
@@ -328,7 +328,7 @@ async def main():
     logger.info(Config.get_summary())
 
     # Инициализация БД
-    db = Database()
+    db = get_database()
     logger.info("Database initialized")
 
     # Инициализация бота
