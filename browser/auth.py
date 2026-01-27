@@ -264,11 +264,43 @@ class WBAuthService:
             input_value = await phone_input.input_value()
             logger.info(f"Значение в поле после ввода: '{input_value}'")
 
-            # Нажимаем кнопку отправки
-            submit_button = await self._find_submit_button(page)
-            if submit_button:
-                await submit_button.click()
-                await browser.human_delay(2000, 3000)
+            # Закрываем dropdown если он открылся при вводе
+            await page.keyboard.press('Escape')
+            await browser.human_delay(300, 500)
+
+            # Пробуем отправить форму несколькими способами
+            submitted = False
+
+            # Способ 1: Нажать Enter (самый надёжный для форм)
+            logger.info("Отправка формы через Enter")
+            await page.keyboard.press('Enter')
+            await browser.human_delay(2000, 3000)
+
+            # Проверяем, появилось ли поле кода
+            code_input = await self._find_code_input(page)
+            if code_input:
+                submitted = True
+                logger.info("Форма отправлена через Enter")
+
+            # Способ 2: Если Enter не сработал, ищем и кликаем кнопку
+            if not submitted:
+                logger.info("Enter не сработал, пробуем кнопку")
+                # Закрываем dropdown снова
+                await page.keyboard.press('Escape')
+                await browser.human_delay(200, 300)
+
+                submit_button = await self._find_submit_button(page)
+                if submit_button:
+                    # Кликаем по координатам кнопки (не просто click)
+                    button_box = await submit_button.bounding_box()
+                    if button_box:
+                        btn_x = button_box['x'] + button_box['width'] / 2
+                        btn_y = button_box['y'] + button_box['height'] / 2
+                        logger.info(f"Кликаем кнопку по координатам: x={btn_x}, y={btn_y}")
+                        await page.mouse.click(btn_x, btn_y)
+                    else:
+                        await submit_button.click()
+                    await browser.human_delay(2000, 3000)
 
             # Проверяем ошибки
             error = await self._check_error(page)
