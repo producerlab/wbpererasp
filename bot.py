@@ -21,11 +21,14 @@ from aiogram.client.default import DefaultBotProperties
 
 from config import Config
 from db_factory import get_database
-from handlers import token_router, supplier_router, monitoring_router, booking_router, redistribution_router
+from handlers import token_router, supplier_router, redistribution_router
+# Мониторинг и бронирование отключены
+# from handlers import monitoring_router, booking_router
 from handlers.token_management import TokenStates
-from services.coefficient_monitor import CoefficientMonitor, MonitoringEvent
-from services.notification_service import NotificationService
-from services.slot_booking import SlotBookingService
+# Сервисы мониторинга отключены
+# from services.coefficient_monitor import CoefficientMonitor, MonitoringEvent
+# from services.notification_service import NotificationService
+# from services.slot_booking import SlotBookingService
 from wb_api.client import WBApiClient
 from aiogram.fsm.context import FSMContext
 
@@ -43,72 +46,20 @@ logger = logging.getLogger(__name__)
 # Глобальные объекты
 db = None  # Database instance (SQLite or PostgreSQL)
 bot: Optional[Bot] = None
-monitor: Optional[CoefficientMonitor] = None
-notification_service: Optional[NotificationService] = None
-booking_service: Optional[SlotBookingService] = None
+# Сервисы мониторинга отключены
+# monitor: Optional[CoefficientMonitor] = None
+# notification_service: Optional[NotificationService] = None
+# booking_service: Optional[SlotBookingService] = None
 
 
-async def on_coefficient_change(event: MonitoringEvent):
-    """
-    Обработчик изменения коэффициентов.
-
-    Фильтрует незначимые изменения и применяет cooldown.
-    """
-    change = event.change
-    subscriptions = event.subscriptions
-
-    # Фильтруем незначимые изменения
-    coeff_diff = abs(change.new_coefficient - change.old_coefficient)
-
-    # Уведомляем только если:
-    # 1. Коэффициент стал бесплатным (0)
-    # 2. Коэффициент стал очень выгодным (≤ 0.5)
-    # 3. Изменение больше 0.2 (значимое)
-    is_significant = (
-        change.new_coefficient == 0 or  # Бесплатно!
-        (change.new_coefficient <= 0.5 and change.old_coefficient > 0.5) or  # Стало очень выгодно
-        (change.new_coefficient >= 0 and change.old_coefficient < 0) or  # Стало доступно
-        coeff_diff >= 0.2  # Значимое изменение
-    )
-
-    if not is_significant:
-        logger.debug(
-            f"Skipping insignificant change: {change.warehouse_name} "
-            f"{change.old_coefficient} -> {change.new_coefficient} (diff: {coeff_diff})"
-        )
-        return
-
-    logger.info(
-        f"Significant coefficient change: {change.warehouse_name} "
-        f"{change.old_coefficient} -> {change.new_coefficient}"
-    )
-
-    # Отправляем уведомления всем подписчикам (с cooldown внутри)
-    await notification_service.broadcast_to_subscribers(subscriptions, change)
-
-    # Автобронирование для тех, кто включил
-    auto_book_subs = [s for s in subscriptions if s.get('auto_book')]
-    if auto_book_subs:
-        from wb_api.coefficients import Coefficient
-        coeff = Coefficient(
-            warehouse_id=change.warehouse_id,
-            warehouse_name=change.warehouse_name,
-            date=change.date,
-            coefficient=change.new_coefficient
-        )
-        results = await booking_service.auto_book_for_subscriptions(
-            auto_book_subs, coeff
-        )
-        for result in results:
-            if result and result.success:
-                # Уведомляем об автобронировании
-                if result.user_id:
-                    await notification_service.notify_auto_booking(
-                        user_id=result.user_id,
-                        result=result,
-                        warehouse_name=change.warehouse_name,
-                        coefficient=change.new_coefficient
-                    )
+# МОНИТОРИНГ ОТКЛЮЧЕН
+# async def on_coefficient_change(event: MonitoringEvent):
+#     """
+#     Обработчик изменения коэффициентов.
+#
+#     Фильтрует незначимые изменения и применяет cooldown.
+#     """
+#     pass
 
 
 async def cmd_start(message: Message):
@@ -140,21 +91,12 @@ async def cmd_start(message: Message):
         await message.answer(
             f"👋 <b>Добро пожаловать в WB Redistribution Bot!</b>\n\n"
             f"Я помогу вам:\n"
-            f"📦 Перераспределять остатки между складами\n"
-            f"📊 Мониторить коэффициенты приёмки в реальном времени\n"
-            f"🚀 Автоматически бронировать выгодные слоты\n"
-            f"📍 Получать рекомендации куда отправлять товары\n\n"
-            f"<b>Перераспределение:</b>\n"
-            f"Нажмите кнопку ниже для открытия Mini App 👇\n\n"
-            f"<b>Мониторинг:</b>\n"
-            f"/coefficients - текущие коэффициенты\n"
-            f"/monitor - настроить мониторинг\n"
-            f"/recommend - куда везти товар\n\n"
-            f"<b>Бронирование:</b>\n"
-            f"/book - забронировать слот\n"
-            f"/history - история бронирований\n\n"
-            f"/token - управление токенами\n"
-            f"/help - справка",
+            f"📦 Перераспределять остатки между складами\n\n"
+            f"<b>Команды:</b>\n"
+            f"📦 /redistribute - открыть форму перераспределения\n"
+            f"🏪 /suppliers - управление поставщиками\n"
+            f"🔑 /token - управление токенами\n"
+            f"❓ /help - справка",
             parse_mode=ParseMode.HTML,
             reply_markup=keyboard
         )
@@ -162,9 +104,7 @@ async def cmd_start(message: Message):
         # Если токена нет - показываем инструкцию без кнопки
         await message.answer(
             f"👋 <b>Добро пожаловать в WB Redistribution Bot!</b>\n\n"
-            f"📦 Перераспределение остатков между складами\n"
-            f"📊 Мониторинг коэффициентов приёмки\n"
-            f"🚀 Автобронирование выгодных слотов\n\n"
+            f"📦 <b>Перераспределение остатков между складами</b>\n\n"
             f"⚠️ <b>Для начала работы необходимо добавить WB API токен:</b>\n\n"
             f"Откройте <a href='https://seller.wildberries.ru/supplier-settings/access-to-api'>ЛК Wildberries</a> → Настройки → Доступ к API\n\n"
             f"Создайте токен с правами:\n"
@@ -173,7 +113,7 @@ async def cmd_start(message: Message):
             f"• <b>Контент</b>\n\n"
             f"Уровень доступа: <b>Чтение и запись</b>\n\n"
             f"<b>Скопируйте токен и отправьте его мне 👇</b>\n"
-            f"Я проверю и подключу Mini App автоматически 🚀",
+            f"Я проверю и подключу автоматически 🚀",
             parse_mode=ParseMode.HTML,
             disable_web_page_preview=True
         )
@@ -185,22 +125,15 @@ async def cmd_help(message: Message):
         "<b>📚 Справка по командам</b>\n\n"
         "<b>Токены:</b>\n"
         "/token - добавить/удалить WB API токен\n\n"
+        "<b>Поставщики:</b>\n"
+        "/suppliers - управление поставщиками (переименование, удаление)\n\n"
         "<b>Перераспределение:</b>\n"
         "/redistribute - перераспределить остатки между складами\n\n"
-        "<b>Мониторинг:</b>\n"
-        "/monitor - настроить мониторинг складов\n"
-        "/coefficients - текущие коэффициенты\n"
-        "/recommend - куда везти товар (рекомендации)\n\n"
-        "<b>Бронирование:</b>\n"
-        "/book - забронировать слот вручную\n"
-        "/history - история бронирований\n\n"
         "<b>Как получить WB API токен:</b>\n"
         "1. ЛК WB → Настройки → Доступ к API\n"
         "2. Создайте токен с правами: <b>Маркетплейс</b>, <b>Поставки</b>, <b>Контент</b>\n"
         "3. Уровень доступа: <b>Чтение и запись</b>\n"
-        "4. Отправьте токен боту через /token\n\n"
-        "<i>Мониторинг проверяет коэффициенты каждые "
-        f"{Config.COEFFICIENT_POLL_INTERVAL} секунд</i>",
+        "4. Отправьте токен боту через /token",
         parse_mode=ParseMode.HTML
     )
 
@@ -211,17 +144,12 @@ async def cmd_stats(message: Message):
         return
 
     total_stats = db.get_total_stats()
-    monitor_stats = monitor.get_stats() if monitor else {}
 
     await message.answer(
         f"📊 <b>Статистика бота</b>\n\n"
         f"👥 Пользователей: {total_stats.get('total_users', 0)}\n"
         f"📝 Запросов: {total_stats.get('total_requests', 0)}\n\n"
-        f"<b>Мониторинг:</b>\n"
-        f"🔄 Статус: {'Работает' if monitor_stats.get('running') else 'Остановлен'}\n"
-        f"📊 Опросов: {monitor_stats.get('polls_count', 0)}\n"
-        f"🔔 Изменений: {monitor_stats.get('changes_detected', 0)}\n"
-        f"📦 Кэш коэфф.: {monitor_stats.get('cached_coefficients', 0)}",
+        f"<b>Мониторинг:</b> Отключен",
         parse_mode=ParseMode.HTML
     )
 
@@ -293,56 +221,17 @@ async def handle_text_message(message: Message, state: FSMContext):
     await state.set_state(TokenStates.waiting_for_name)
 
 
-async def start_monitoring():
-    """
-    Запускает фоновый мониторинг коэффициентов.
-
-    Поддерживает два режима:
-    1. Глобальный (если есть WB_SYSTEM_TOKEN) - эффективно для всех пользователей
-    2. Персональный (fallback) - по токену для каждого пользователя с подпиской
-    """
-    global monitor
-
-    # Проверяем глобальный флаг
-    if not Config.ENABLE_MONITORING:
-        logger.info("Monitoring is DISABLED in config (ENABLE_MONITORING=false)")
-        return
-
-    system_token = Config.WB_SYSTEM_TOKEN if hasattr(Config, 'WB_SYSTEM_TOKEN') else None
-
-    if system_token:
-        # РЕЖИМ 1: Глобальный мониторинг (оптимально)
-        logger.info("Starting GLOBAL monitoring with system token")
-        monitor = CoefficientMonitor(db, system_token)
-        monitor.on_change(on_coefficient_change)
-        await monitor.start()
-    else:
-        # РЕЖИМ 2: Персональный мониторинг (fallback)
-        logger.warning(
-            "WB_SYSTEM_TOKEN not configured. "
-            "Starting MULTI-USER monitoring mode (uses user tokens)."
-        )
-
-        # Получаем всех пользователей с активными подписками на мониторинг
-        # В будущем можно добавить метод db.get_users_with_active_monitoring()
-        # Пока просто логируем предупреждение
-        logger.warning(
-            "Multi-user monitoring requires implementation. "
-            "For now, please configure WB_SYSTEM_TOKEN in .env"
-        )
-
-        # TODO: Реализовать персональный мониторинг
-        # Пример архитектуры:
-        # 1. db.get_users_with_active_monitoring() -> список user_id
-        # 2. Для каждого user_id получить его токен
-        # 3. Создать отдельный CoefficientMonitor с очередью запросов
-        # 4. Управление rate limiting через Redis (5-6 req/min на всех)
-        return
+# МОНИТОРИНГ ОТКЛЮЧЕН
+# async def start_monitoring():
+#     """
+#     Запускает фоновый мониторинг коэффициентов - ОТКЛЮЧЕНО
+#     """
+#     pass
 
 
 async def main():
     """Главная функция запуска бота"""
-    global db, bot, notification_service, booking_service
+    global db, bot
 
     # Валидация конфигурации
     Config.validate()
@@ -359,12 +248,12 @@ async def main():
         default=DefaultBotProperties(parse_mode=ParseMode.HTML)
     )
 
-    # Инициализация сервисов
-    notification_service = NotificationService(
-        bot,
-        cooldown_minutes=Config.NOTIFICATION_COOLDOWN_MINUTES
-    )
-    booking_service = SlotBookingService(db)
+    # Инициализация сервисов - мониторинг отключен
+    # notification_service = NotificationService(
+    #     bot,
+    #     cooldown_minutes=Config.NOTIFICATION_COOLDOWN_MINUTES
+    # )
+    # booking_service = SlotBookingService(db)
 
     # Диспетчер
     dp = Dispatcher()
@@ -377,8 +266,8 @@ async def main():
     # Подключение роутеров
     dp.include_router(token_router)
     dp.include_router(supplier_router)
-    dp.include_router(monitoring_router)
-    dp.include_router(booking_router)
+    # dp.include_router(monitoring_router)  # ОТКЛЮЧЕН
+    # dp.include_router(booking_router)     # ОТКЛЮЧЕН
     dp.include_router(redistribution_router)
 
     # Обработчик обычных текстовых сообщений (регистрируем последним как catch-all)
@@ -386,8 +275,9 @@ async def main():
 
     logger.info("Handlers registered")
 
-    # Запуск мониторинга коэффициентов
-    await start_monitoring()
+    # Запуск мониторинга коэффициентов - ОТКЛЮЧЕН
+    # await start_monitoring()
+    logger.info("Coefficient monitoring is DISABLED (commented out)")
 
     # Запуск бота
     print("\n✅ Бот успешно запущен!")
@@ -396,10 +286,8 @@ async def main():
     print("\n📝 Команды бота:")
     print("   /start - начало работы")
     print("   /token - добавить WB API токен")
+    print("   /suppliers - управление поставщиками")
     print("   /redistribute - перераспределить остатки")
-    print("   /coefficients - текущие коэффициенты")
-    print("   /monitor - настроить мониторинг")
-    print("   /book - забронировать слот")
     print("\n⏳ Ожидание сообщений... (Ctrl+C для остановки)\n")
     print("=" * 50)
 
@@ -407,8 +295,8 @@ async def main():
     try:
         await dp.start_polling(bot)
     finally:
-        if monitor:
-            await monitor.stop()
+        # if monitor:
+        #     await monitor.stop()
         await bot.session.close()
 
 
