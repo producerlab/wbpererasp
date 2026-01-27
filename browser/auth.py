@@ -219,21 +219,33 @@ class WBAuthService:
             phone_digits = normalized_phone.replace('+7', '').replace('+', '')
             logger.info(f"Вводим телефон: {phone_digits[:3]}***")
 
-            # Кликаем на найденный элемент и вводим номер напрямую
-            # НЕ используем human_type с селектором, т.к. он может найти не тот элемент
-            await phone_input.click()
-            await browser.human_delay(300, 500)
-
-            # Очищаем поле на случай если там что-то есть
-            await phone_input.fill('')
-            await browser.human_delay(200, 400)
-
-            # Вводим цифры по одной (имитация человека)
-            for digit in phone_digits:
-                await page.keyboard.type(digit, delay=100)
-                await browser.human_delay(50, 150)
+            # ВАЖНО: НЕ кликаем на поле - это открывает dropdown выбора страны!
+            # Используем fill() напрямую - он сам фокусирует элемент
+            try:
+                # Способ 1: Прямой fill без клика
+                await phone_input.fill(phone_digits)
+                logger.info("Номер введён через fill()")
+            except Exception as e:
+                logger.warning(f"fill() не сработал: {e}, пробуем focus + type")
+                # Способ 2: focus + type (без click!)
+                await phone_input.focus()
+                await browser.human_delay(200, 300)
+                # Закрываем возможный dropdown
+                await page.keyboard.press('Escape')
+                await browser.human_delay(100, 200)
+                # Снова фокус и ввод
+                await phone_input.focus()
+                await phone_input.fill('')
+                for digit in phone_digits:
+                    await page.keyboard.type(digit, delay=80)
+                    await browser.human_delay(30, 80)
+                logger.info("Номер введён через focus + type")
 
             await browser.human_delay(500, 1000)
+
+            # Проверяем что номер введён (диагностика)
+            input_value = await phone_input.input_value()
+            logger.info(f"Значение в поле после ввода: '{input_value}'")
 
             # Нажимаем кнопку отправки
             submit_button = await self._find_submit_button(page)
