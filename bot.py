@@ -20,7 +20,8 @@ from aiogram.client.default import DefaultBotProperties
 
 from config import Config
 from db_factory import get_database
-from handlers import redistribution_router, browser_auth_router, payment_router
+from handlers import redistribution_router, browser_auth_router
+# from handlers import payment_router  # Временно отключено до реализации YooKassa
 from aiogram.fsm.context import FSMContext
 
 # Настройка логирования
@@ -202,7 +203,7 @@ async def main():
     # Подключение роутеров
     dp.include_router(redistribution_router)
     dp.include_router(browser_auth_router)
-    dp.include_router(payment_router)
+    # dp.include_router(payment_router)  # Временно отключено до реализации YooKassa
 
     logger.info("Handlers registered")
 

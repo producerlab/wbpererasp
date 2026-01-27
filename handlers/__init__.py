@@ -9,10 +9,10 @@ Telegram handlers для бота перераспределения остат�
 
 from .redistribution import router as redistribution_router
 from .browser_auth import router as browser_auth_router
-from .payment_handler import router as payment_router
+# from .payment_handler import router as payment_router  # Временно отключено
 
 __all__ = [
     'redistribution_router',
     'browser_auth_router',
-    'payment_router',
+    # 'payment_router',  # Временно отключено
 ]
