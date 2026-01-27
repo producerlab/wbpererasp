@@ -218,7 +218,21 @@ class WBAuthService:
             # Вводим номер телефона (без +7, т.к. на странице WB уже есть префикс +7)
             phone_digits = normalized_phone.replace('+7', '').replace('+', '')
             logger.info(f"Вводим телефон: {phone_digits[:3]}***")
-            await browser.human_type(page, self.SELECTORS['phone_input'], phone_digits)
+
+            # Кликаем на найденный элемент и вводим номер напрямую
+            # НЕ используем human_type с селектором, т.к. он может найти не тот элемент
+            await phone_input.click()
+            await browser.human_delay(300, 500)
+
+            # Очищаем поле на случай если там что-то есть
+            await phone_input.fill('')
+            await browser.human_delay(200, 400)
+
+            # Вводим цифры по одной (имитация человека)
+            for digit in phone_digits:
+                await page.keyboard.type(digit, delay=100)
+                await browser.human_delay(50, 150)
+
             await browser.human_delay(500, 1000)
 
             # Нажимаем кнопку отправки
@@ -371,48 +385,101 @@ class WBAuthService:
             return session
 
     async def _find_phone_input(self, page: Page) -> Optional[Any]:
-        """Найти поле ввода телефона"""
-        # Сначала пробуем комбинированный селектор
-        try:
-            element = await page.wait_for_selector(
-                self.SELECTORS['phone_input'],
-                timeout=10000,
-                state='visible'
-            )
-            if element:
-                logger.info("Найдено поле телефона через комбинированный селектор")
-                return element
-        except PlaywrightTimeout:
-            logger.warning("Комбинированный селектор не сработал, пробуем по одному")
+        """
+        Найти поле ввода телефона (цифры номера, НЕ dropdown выбора страны).
 
-        # Пробуем каждый селектор отдельно
-        individual_selectors = [
-            'input[type="tel"]',
-            'input[autocomplete="tel"]',
-            'input[name="phone"]',
-            'input[placeholder*="телефон" i]',
-            'input[class*="phone" i]',
-            '#phone',
-            '[data-testid*="phone"] input',
+        WB имеет сложный компонент: dropdown выбора страны (+7, +374, ...)
+        и отдельное поле для ввода цифр номера.
+        """
+        # Ждём загрузки страницы
+        await page.wait_for_load_state('domcontentloaded')
+
+        # Стратегия 1: Ищем поле по placeholder с цифрами/форматом номера
+        placeholder_selectors = [
+            'input[placeholder*="000"]',           # Placeholder "000 000 0000" или подобный
+            'input[placeholder*="___"]',           # Placeholder с подчёркиваниями
+            'input[placeholder*="9"]',             # Placeholder начинающийся с 9
+            'input[placeholder*="номер" i]',       # "Введите номер"
+            'input[placeholder*="phone" i]',       # "phone"
         ]
 
-        for selector in individual_selectors:
+        for selector in placeholder_selectors:
             try:
                 element = await page.query_selector(selector)
                 if element and await element.is_visible():
-                    logger.info(f"Найдено поле телефона через: {selector}")
+                    placeholder = await element.get_attribute('placeholder') or ''
+                    logger.info(f"Найдено поле телефона по placeholder: '{placeholder}' через {selector}")
                     return element
             except Exception as e:
                 logger.debug(f"Селектор {selector} не сработал: {e}")
 
-        # Последняя попытка - найти любой видимый input
+        # Стратегия 2: Ищем все input[type="tel"] и берём последний (обычно это поле цифр)
         try:
-            inputs = await page.query_selector_all('input:visible')
-            logger.info(f"Найдено {len(inputs)} видимых input элементов")
+            tel_inputs = await page.query_selector_all('input[type="tel"]')
+            logger.info(f"Найдено {len(tel_inputs)} элементов input[type='tel']")
+
+            for i, inp in enumerate(tel_inputs):
+                placeholder = await inp.get_attribute('placeholder') or ''
+                name = await inp.get_attribute('name') or ''
+                class_attr = await inp.get_attribute('class') or ''
+                logger.info(f"  tel input [{i}]: placeholder='{placeholder}', name='{name}', class='{class_attr[:50]}'")
+
+            # Если есть несколько tel inputs, берём последний (обычно это поле для цифр)
+            # Первый часто является частью dropdown выбора страны
+            if len(tel_inputs) >= 2:
+                element = tel_inputs[-1]  # Последний input
+                if await element.is_visible():
+                    logger.info("Используем последний input[type='tel'] (поле для цифр)")
+                    return element
+            elif len(tel_inputs) == 1:
+                # Только один tel input - используем его, но сначала кликаем мимо dropdown
+                element = tel_inputs[0]
+                if await element.is_visible():
+                    logger.info("Найден единственный input[type='tel']")
+                    return element
+        except Exception as e:
+            logger.warning(f"Ошибка при поиске input[type='tel']: {e}")
+
+        # Стратегия 3: Ищем input рядом с текстом "+7" или в форме
+        try:
+            # Ищем форму авторизации и внутри неё input
+            form_selectors = [
+                'form input[type="tel"]',
+                'form input[type="text"]',
+                '[class*="auth"] input',
+                '[class*="login"] input',
+                '[class*="phone-input"] input',
+            ]
+
+            for selector in form_selectors:
+                elements = await page.query_selector_all(selector)
+                for element in elements:
+                    if await element.is_visible():
+                        # Проверяем что это не маленький input (dropdown обычно маленький)
+                        box = await element.bounding_box()
+                        if box and box['width'] > 100:  # Поле для номера шире
+                            logger.info(f"Найдено поле телефона в форме через {selector}, width={box['width']}")
+                            return element
+        except Exception as e:
+            logger.warning(f"Ошибка при поиске в форме: {e}")
+
+        # Стратегия 4: Последняя попытка - любой видимый input подходящего типа
+        try:
+            inputs = await page.query_selector_all('input')
+            logger.info(f"Найдено {len(inputs)} input элементов всего")
+
             for inp in inputs:
+                if not await inp.is_visible():
+                    continue
+
                 input_type = await inp.get_attribute('type') or 'text'
-                if input_type in ['tel', 'text', 'number']:
-                    logger.info(f"Используем input type={input_type} как поле телефона")
+                if input_type not in ['tel', 'text', 'number']:
+                    continue
+
+                # Проверяем размер - поле для номера должно быть достаточно широким
+                box = await inp.bounding_box()
+                if box and box['width'] > 100:
+                    logger.info(f"Используем input type={input_type}, width={box['width']} как поле телефона")
                     return inp
         except Exception as e:
             logger.error(f"Ошибка при поиске input: {e}")
