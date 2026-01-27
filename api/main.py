@@ -5,14 +5,14 @@ API endpoints для управления перераспределением �
 """
 
 import logging
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from typing import Dict
+from typing import Dict, Optional
 
 from config import Config
 from database import Database
-from api.auth import get_telegram_user
+from api.auth import validate_telegram_web_app_data
 
 logger = logging.getLogger(__name__)
 
@@ -38,15 +38,17 @@ app.mount("/webapp", StaticFiles(directory="webapp", html=True), name="webapp")
 
 # Dependency для получения пользователя
 async def get_current_user(
-    user_data: Dict = Depends(
-        lambda x_telegram_init_data=None: get_telegram_user(
-            x_telegram_init_data,
-            Config.BOT_TOKEN
-        )
-    )
+    x_telegram_init_data: Optional[str] = Header(None)
 ) -> Dict:
     """Получает текущего пользователя из Telegram initData"""
-    return user_data
+    if not x_telegram_init_data:
+        from fastapi import HTTPException, status
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing Telegram init data"
+        )
+
+    return validate_telegram_web_app_data(x_telegram_init_data, Config.BOT_TOKEN)
 
 
 # Dependency для БД
@@ -72,7 +74,11 @@ async def get_me(user: Dict = Depends(get_current_user)):
 
     Тестовый endpoint для проверки авторизации.
     """
-    return user
+    return {
+        "user_id": user['user_id'],
+        "username": user.get('username'),
+        "first_name": user.get('first_name')
+    }
 
 
 @app.get("/health")
