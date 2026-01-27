@@ -59,11 +59,12 @@ async def cmd_start(message: Message):
 
     if has_token:
         # Если токен есть - показываем кнопку Mini App
+        webapp_url = Config.WEBAPP_URL.rstrip('/')
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(
                     text="📦 Открыть Перераспределение",
-                    web_app=WebAppInfo(url=f"{Config.WEBAPP_URL}/webapp/index.html")
+                    web_app=WebAppInfo(url=f"{webapp_url}/webapp/index.html")
                 )
             ]
         ])

@@ -49,7 +49,7 @@ async def cmd_redistribute(message: Message, state: FSMContext):
         return
 
     # Создаем кнопку для открытия Mini App
-    webapp_url = Config.WEBAPP_URL
+    webapp_url = Config.WEBAPP_URL.rstrip('/') + '/webapp/index.html'
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[

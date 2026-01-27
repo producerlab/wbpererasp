@@ -240,11 +240,15 @@ async def process_token_name(message: Message, state: FSMContext):
         )
 
         # Показываем кнопку Mini App после успешного добавления токена
+        webapp_url = Config.WEBAPP_URL
+        if not webapp_url.endswith('/'):
+            webapp_url += '/'
+
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(
                     text="📦 Открыть Перераспределение",
-                    web_app=WebAppInfo(url=f"{Config.WEBAPP_URL}/webapp/index.html")
+                    web_app=WebAppInfo(url=f"{webapp_url}webapp/index.html")
                 )
             ]
         ])
