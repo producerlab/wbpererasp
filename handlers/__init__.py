@@ -11,10 +11,6 @@ from .token_management import router as token_router
 from .supplier_management import router as supplier_router
 from .redistribution import router as redistribution_router
 
-# Мониторинг и бронирование УДАЛЕНЫ
-# from .monitoring import router as monitoring_router
-# from .booking import router as booking_router
-
 __all__ = [
     'token_router',
     'supplier_router',

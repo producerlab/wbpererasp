@@ -22,13 +22,7 @@ from aiogram.client.default import DefaultBotProperties
 from config import Config
 from db_factory import get_database
 from handlers import token_router, supplier_router, redistribution_router
-# Мониторинг и бронирование отключены
-# from handlers import monitoring_router, booking_router
 from handlers.token_management import TokenStates
-# Сервисы мониторинга отключены
-# from services.coefficient_monitor import CoefficientMonitor, MonitoringEvent
-# from services.notification_service import NotificationService
-# from services.slot_booking import SlotBookingService
 from wb_api.client import WBApiClient
 from aiogram.fsm.context import FSMContext
 
@@ -46,20 +40,6 @@ logger = logging.getLogger(__name__)
 # Глобальные объекты
 db = None  # Database instance (SQLite or PostgreSQL)
 bot: Optional[Bot] = None
-# Сервисы мониторинга отключены
-# monitor: Optional[CoefficientMonitor] = None
-# notification_service: Optional[NotificationService] = None
-# booking_service: Optional[SlotBookingService] = None
-
-
-# МОНИТОРИНГ ОТКЛЮЧЕН
-# async def on_coefficient_change(event: MonitoringEvent):
-#     """
-#     Обработчик изменения коэффициентов.
-#
-#     Фильтрует незначимые изменения и применяет cooldown.
-#     """
-#     pass
 
 
 async def cmd_start(message: Message):
@@ -221,14 +201,6 @@ async def handle_text_message(message: Message, state: FSMContext):
     await state.set_state(TokenStates.waiting_for_name)
 
 
-# МОНИТОРИНГ ОТКЛЮЧЕН
-# async def start_monitoring():
-#     """
-#     Запускает фоновый мониторинг коэффициентов - ОТКЛЮЧЕНО
-#     """
-#     pass
-
-
 async def main():
     """Главная функция запуска бота"""
     global db, bot
@@ -242,29 +214,11 @@ async def main():
     db = get_database()
     logger.info("Database initialized")
 
-    # КРИТИЧНО: Отключаем все подписки на мониторинг
-    try:
-        with db._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("UPDATE monitoring_subscriptions SET is_active = 0")
-            affected = cursor.rowcount
-            if affected > 0:
-                logger.warning(f"Disabled {affected} monitoring subscriptions (monitoring is OFF)")
-    except Exception as e:
-        logger.warning(f"Failed to disable monitoring subscriptions: {e}")
-
     # Инициализация бота
     bot = Bot(
         token=Config.BOT_TOKEN,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML)
     )
-
-    # Инициализация сервисов - мониторинг отключен
-    # notification_service = NotificationService(
-    #     bot,
-    #     cooldown_minutes=Config.NOTIFICATION_COOLDOWN_MINUTES
-    # )
-    # booking_service = SlotBookingService(db)
 
     # Диспетчер
     dp = Dispatcher()
@@ -277,18 +231,12 @@ async def main():
     # Подключение роутеров
     dp.include_router(token_router)
     dp.include_router(supplier_router)
-    # dp.include_router(monitoring_router)  # ОТКЛЮЧЕН
-    # dp.include_router(booking_router)     # ОТКЛЮЧЕН
     dp.include_router(redistribution_router)
 
     # Обработчик обычных текстовых сообщений (регистрируем последним как catch-all)
     dp.message.register(handle_text_message)
 
     logger.info("Handlers registered")
-
-    # Запуск мониторинга коэффициентов - ОТКЛЮЧЕН
-    # await start_monitoring()
-    logger.info("Coefficient monitoring is DISABLED (commented out)")
 
     # Запуск бота
     print("\n✅ Бот успешно запущен!")
@@ -303,20 +251,44 @@ async def main():
     print("=" * 50)
 
     logger.info("Starting bot...")
+
+    # Retry логика для борьбы с TelegramConflictError
+    max_retries = 5
+    retry_delay = 10  # секунд
+
+    for attempt in range(max_retries):
+        try:
+            logger.info(f"Attempt {attempt + 1}/{max_retries} to start polling...")
+            await dp.start_polling(bot)
+            break  # Если успешно - выходим из цикла
+        except Exception as e:
+            error_msg = str(e).lower()
+            if 'conflict' in error_msg or 'terminated by other getupdates' in error_msg:
+                if attempt < max_retries - 1:
+                    logger.warning(f"⚠️  TelegramConflictError on attempt {attempt + 1}")
+                    logger.warning(f"Old bot instance still running. Waiting {retry_delay}s before retry...")
+                    await bot.session.close()
+                    await asyncio.sleep(retry_delay)
+                    # Пересоздаем bot для нового соединения
+                    bot = Bot(
+                        token=Config.BOT_TOKEN,
+                        default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+                    )
+                    continue
+                else:
+                    logger.error("❌ TelegramConflictError: Failed after all retries!")
+                    logger.error("Old bot deployment is stuck. Manual intervention needed.")
+                    await bot.session.close()
+                    sys.exit(1)
+            else:
+                # Другая ошибка - пробрасываем дальше
+                raise
+
+    # Cleanup
     try:
-        await dp.start_polling(bot)
-    except Exception as e:
-        error_msg = str(e).lower()
-        if 'conflict' in error_msg or 'terminated by other getupdates' in error_msg:
-            logger.error("❌ TelegramConflictError: Another bot instance is running!")
-            logger.error("Exiting with error code to trigger Railway restart...")
-            await bot.session.close()
-            sys.exit(1)  # Exit with error to trigger Railway restart
-        raise
-    finally:
-        # if monitor:
-        #     await monitor.stop()
         await bot.session.close()
+    except:
+        pass
 
 
 if __name__ == "__main__":
