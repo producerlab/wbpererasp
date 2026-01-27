@@ -75,15 +75,15 @@ class WBAuthService:
             'form input[type="text"]',  # Fallback - первый input в форме
         ]),
         'submit_button': ', '.join([
-            'button[type="submit"]',
-            'button[class*="submit"]',
-            'button[class*="Submit"]',
             'button:has-text("Получить код")',
             'button:has-text("Войти")',
             'button:has-text("Далее")',
             'button:has-text("Продолжить")',
+            'button[type="submit"]',
+            'button[class*="submit"]',
+            'button[class*="Submit"]',
             '[data-testid*="submit"]',
-            'form button',
+            # НЕ используем 'form button' - слишком широко, может найти кнопку dropdown
         ]),
         'code_input': ', '.join([
             'input[type="tel"][maxlength="6"]',
@@ -300,43 +300,89 @@ class WBAuthService:
                 session.error_message = "Номер телефона не сохранился в поле. Попробуйте ещё раз."
                 return session
 
-            # Пробуем отправить форму - сначала кнопкой (надёжнее чем Enter)
+            # Пробуем отправить форму несколькими способами
             submitted = False
 
-            # Способ 1: Клик по кнопке "Получить код" / "Войти"
+            # Сначала закрываем любые открытые dropdown'ы
+            await page.keyboard.press('Escape')
+            await browser.human_delay(200, 300)
+
+            # Способ 1: JavaScript click по кнопке (надёжнее чем mouse click)
             submit_button = await self._find_submit_button(page)
             if submit_button:
-                # Проверяем текст кнопки
                 button_text = await submit_button.inner_text()
-                logger.info(f"Найдена кнопка: '{button_text}'")
+                logger.info(f"Найдена кнопка для отправки: '{button_text}'")
 
-                # Кликаем по координатам кнопки
+                # Используем JavaScript click - он обходит проблемы с перекрытием элементов
+                try:
+                    await submit_button.evaluate('el => el.click()')
+                    logger.info("Выполнен JavaScript click по кнопке")
+                    await browser.human_delay(3000, 4000)
+
+                    code_input = await self._find_code_input(page)
+                    if code_input:
+                        submitted = True
+                        logger.info("Форма отправлена через JS click")
+                except Exception as e:
+                    logger.warning(f"JS click не сработал: {e}")
+
+            # Способ 2: Координатный клик по кнопке
+            if not submitted and submit_button:
+                logger.info("JS click не сработал, пробуем координатный клик")
                 button_box = await submit_button.bounding_box()
                 if button_box:
                     btn_x = button_box['x'] + button_box['width'] / 2
                     btn_y = button_box['y'] + button_box['height'] / 2
                     logger.info(f"Кликаем кнопку по координатам: x={btn_x}, y={btn_y}")
+
+                    # Сначала убедимся что dropdown закрыт
+                    await page.keyboard.press('Escape')
+                    await browser.human_delay(100, 200)
+
                     await page.mouse.click(btn_x, btn_y)
-                else:
-                    await submit_button.click()
-                await browser.human_delay(3000, 4000)
+                    await browser.human_delay(3000, 4000)
 
-                # Проверяем, появилось ли поле кода
-                code_input = await self._find_code_input(page)
-                if code_input:
-                    submitted = True
-                    logger.info("Форма отправлена через кнопку")
+                    code_input = await self._find_code_input(page)
+                    if code_input:
+                        submitted = True
+                        logger.info("Форма отправлена через координатный клик")
 
-            # Способ 2: Если кнопка не сработала, пробуем Enter
+            # Способ 3: Enter в поле ввода
             if not submitted:
-                logger.info("Кнопка не сработала, пробуем Enter")
-                # Сначала кликаем в поле ввода чтобы дать ему фокус
+                logger.info("Клик по кнопке не сработал, пробуем Enter")
+                # Кликаем в поле ввода чтобы дать ему фокус
                 if box:
                     await page.mouse.click(box['x'] + box['width'] * 0.7, box['y'] + box['height'] / 2)
                     await browser.human_delay(200, 300)
 
                 await page.keyboard.press('Enter')
                 await browser.human_delay(3000, 4000)
+
+                code_input = await self._find_code_input(page)
+                if code_input:
+                    submitted = True
+                    logger.info("Форма отправлена через Enter")
+
+            # Способ 4: JavaScript submit формы
+            if not submitted:
+                logger.info("Пробуем JavaScript submit формы")
+                try:
+                    await page.evaluate('''
+                        const form = document.querySelector('form');
+                        if (form) {
+                            form.submit();
+                            return true;
+                        }
+                        return false;
+                    ''')
+                    await browser.human_delay(3000, 4000)
+
+                    code_input = await self._find_code_input(page)
+                    if code_input:
+                        submitted = True
+                        logger.info("Форма отправлена через JS form.submit()")
+                except Exception as e:
+                    logger.warning(f"JS form submit не сработал: {e}")
 
             # ДИАГНОСТИКА: Проверяем состояние страницы после submit
             body_text = await page.inner_text('body')
@@ -603,15 +649,28 @@ class WBAuthService:
         try:
             # Сначала проверим текст страницы - есть ли сообщение об отправке кода
             body_text = await page.inner_text('body')
+
+            # Проверяем, что мы НЕ на странице ввода телефона
+            still_on_phone_page = any(phrase in body_text.lower() for phrase in [
+                'введите номер телефона',
+                'enter phone number',
+                'введите номер, чтобы войти',
+            ])
+
+            if still_on_phone_page:
+                logger.warning("Мы всё ещё на странице ввода телефона - форма не отправилась!")
+                return None
+
             has_code_text = any(phrase in body_text.lower() for phrase in [
                 'введите код', 'enter code', 'код из sms', 'код подтверждения',
-                'отправили код', 'отправлен код', 'мы отправили'
+                'отправили код', 'отправлен код', 'мы отправили', 'sms с кодом'
             ])
             logger.info(f"Текст страницы содержит упоминание кода: {has_code_text}")
+
             if not has_code_text:
                 logger.warning("На странице нет текста о вводе кода - возможно форма не отправилась")
-                # Логируем первые 300 символов для диагностики
                 logger.info(f"Текст страницы: {body_text[:300]}")
+                return None
 
             element = await page.wait_for_selector(
                 self.SELECTORS['code_input'],
@@ -627,25 +686,72 @@ class WBAuthService:
                 value = await element.input_value()
                 logger.info(f"Найдено поле кода: type={input_type}, maxlength={maxlength}, placeholder='{placeholder}', value='{value}'")
 
+                # Валидация: это ДОЛЖНО быть поле для кода, а не что-то другое
+                # Реальное поле кода имеет maxlength=6 или type=tel
+                is_valid_code_field = (
+                    maxlength == '6' or
+                    (input_type == 'tel' and not value) or
+                    'код' in placeholder.lower() or
+                    'code' in placeholder.lower()
+                )
+
+                if not is_valid_code_field:
+                    logger.warning(f"Найденный элемент не похож на поле кода (type={input_type}, maxlength={maxlength})")
+                    return None
+
                 # Если в поле уже есть значение (номер телефона) - это НЕ поле кода!
                 if value and len(value) > 6:
                     logger.warning(f"Поле содержит значение '{value}' - это поле телефона, не кода!")
                     return None
 
-            return element
+                return element
+
+            return None
         except PlaywrightTimeout:
             logger.warning("Timeout при поиске поля кода - поле не появилось")
             return None
 
     async def _find_submit_button(self, page: Page) -> Optional[Any]:
-        """Найти кнопку отправки"""
+        """Найти кнопку отправки формы"""
         try:
-            return await page.wait_for_selector(
-                self.SELECTORS['submit_button'],
-                timeout=5000,
-                state='visible'
-            )
-        except PlaywrightTimeout:
+            # Сначала ищем кнопку с конкретным текстом (наиболее надёжно)
+            specific_buttons = [
+                'button:has-text("Получить код")',
+                'button:has-text("Войти")',
+                'button:has-text("Далее")',
+                'button:has-text("Продолжить")',
+            ]
+
+            for selector in specific_buttons:
+                try:
+                    button = await page.wait_for_selector(selector, timeout=2000, state='visible')
+                    if button:
+                        text = await button.inner_text()
+                        logger.info(f"Найдена кнопка по селектору {selector}: '{text}'")
+
+                        # Проверяем что кнопка достаточно большая (не часть dropdown)
+                        box = await button.bounding_box()
+                        if box and box['width'] > 50 and box['height'] > 20:
+                            return button
+                        else:
+                            logger.warning(f"Кнопка слишком маленькая (width={box['width'] if box else 0}), пропускаем")
+                except PlaywrightTimeout:
+                    continue
+
+            # Fallback: ищем button[type="submit"]
+            try:
+                button = await page.wait_for_selector('button[type="submit"]', timeout=2000, state='visible')
+                if button:
+                    text = await button.inner_text()
+                    logger.info(f"Найдена кнопка type=submit: '{text}'")
+                    return button
+            except PlaywrightTimeout:
+                pass
+
+            logger.warning("Не найдена кнопка отправки формы")
+            return None
+        except Exception as e:
+            logger.error(f"Ошибка при поиске кнопки: {e}")
             return None
 
     async def _check_error(self, page: Page) -> Optional[str]:
