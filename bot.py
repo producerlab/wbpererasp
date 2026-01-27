@@ -242,6 +242,17 @@ async def main():
     db = get_database()
     logger.info("Database initialized")
 
+    # КРИТИЧНО: Отключаем все подписки на мониторинг
+    try:
+        with db._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE monitoring_subscriptions SET is_active = 0")
+            affected = cursor.rowcount
+            if affected > 0:
+                logger.warning(f"Disabled {affected} monitoring subscriptions (monitoring is OFF)")
+    except Exception as e:
+        logger.warning(f"Failed to disable monitoring subscriptions: {e}")
+
     # Инициализация бота
     bot = Bot(
         token=Config.BOT_TOKEN,
