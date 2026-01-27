@@ -54,14 +54,55 @@ class WBAuthService:
     """Сервис авторизации в ЛК Wildberries"""
 
     WB_SELLER_URL = "https://seller.wildberries.ru"
+    WB_LOGIN_URLS = [
+        "https://seller.wildberries.ru/login",
+        "https://seller-auth.wildberries.ru/",
+        "https://seller.wildberries.ru"
+    ]
 
-    # Селекторы элементов на странице авторизации
+    # Селекторы элементов на странице авторизации WB
+    # WB часто меняет структуру, поэтому используем множественные селекторы
     SELECTORS = {
-        'phone_input': 'input[type="tel"], input[name="phone"], input[placeholder*="телефон"], input[class*="phone"]',
-        'submit_button': 'button[type="submit"], button[class*="submit"], button:has-text("Получить код"), button:has-text("Войти")',
-        'code_input': 'input[type="tel"][maxlength="6"], input[name="code"], input[placeholder*="код"], input[class*="code"]',
-        'code_submit': 'button[type="submit"], button:has-text("Войти"), button:has-text("Подтвердить")',
-        'error_message': '[class*="error"], [class*="Error"], [role="alert"]',
+        'phone_input': ', '.join([
+            'input[type="tel"]',
+            'input[name="phone"]',
+            'input[placeholder*="телефон"]',
+            'input[placeholder*="Телефон"]',
+            'input[class*="phone"]',
+            'input[class*="Phone"]',
+            'input[autocomplete="tel"]',
+            '[data-testid*="phone"] input',
+            'form input[type="text"]',  # Fallback - первый input в форме
+        ]),
+        'submit_button': ', '.join([
+            'button[type="submit"]',
+            'button[class*="submit"]',
+            'button[class*="Submit"]',
+            'button:has-text("Получить код")',
+            'button:has-text("Войти")',
+            'button:has-text("Далее")',
+            'button:has-text("Продолжить")',
+            '[data-testid*="submit"]',
+            'form button',
+        ]),
+        'code_input': ', '.join([
+            'input[type="tel"][maxlength="6"]',
+            'input[type="text"][maxlength="6"]',
+            'input[name="code"]',
+            'input[placeholder*="код"]',
+            'input[placeholder*="Код"]',
+            'input[class*="code"]',
+            'input[class*="Code"]',
+            'input[autocomplete="one-time-code"]',
+            '[data-testid*="code"] input',
+        ]),
+        'code_submit': ', '.join([
+            'button[type="submit"]',
+            'button:has-text("Войти")',
+            'button:has-text("Подтвердить")',
+            'button:has-text("Далее")',
+        ]),
+        'error_message': '[class*="error"], [class*="Error"], [role="alert"], [class*="warning"]',
         'supplier_name': '[class*="supplier"], [class*="company"], [class*="header"] span, h1, h2',
     }
 
@@ -132,16 +173,45 @@ class WBAuthService:
             )
             self._sessions[user_id] = session
 
-            # Открываем страницу авторизации
-            logger.debug(f"Открываем {self.WB_SELLER_URL}")
-            await page.goto(self.WB_SELLER_URL, wait_until='networkidle')
-            await browser.human_delay(1000, 2000)
+            # Пробуем разные URL для авторизации (WB может менять структуру)
+            phone_input = None
 
-            # Ищем поле ввода телефона
-            phone_input = await self._find_phone_input(page)
+            for login_url in self.WB_LOGIN_URLS:
+                logger.info(f"Пробуем URL: {login_url}")
+                try:
+                    await page.goto(login_url, wait_until='domcontentloaded', timeout=30000)
+                    await browser.human_delay(2000, 3000)
+
+                    # Логируем текущий URL (возможен редирект)
+                    current_url = page.url
+                    logger.info(f"Текущий URL после загрузки: {current_url}")
+
+                    # Ждём дополнительно если есть защита от ботов
+                    await browser.human_delay(1000, 2000)
+
+                    # Ищем поле ввода телефона
+                    phone_input = await self._find_phone_input(page)
+                    if phone_input:
+                        logger.info(f"Нашли поле телефона на {current_url}")
+                        break
+
+                except Exception as e:
+                    logger.warning(f"Ошибка при загрузке {login_url}: {e}")
+                    continue
             if not phone_input:
+                # Сохраняем скриншот для диагностики
+                screenshot = await browser.take_screenshot(page)
+                if screenshot:
+                    logger.error(f"Страница при ошибке сохранена (screenshot available)")
+
+                # Получаем HTML для диагностики
+                page_content = await page.content()
+                logger.error(f"Page URL: {page.url}")
+                logger.error(f"Page title: {await page.title()}")
+                logger.error(f"HTML length: {len(page_content)} chars")
+
                 session.status = AuthStatus.FAILED
-                session.error_message = "Не найдено поле ввода телефона"
+                session.error_message = "Не найдено поле ввода телефона. Возможно, WB изменил страницу авторизации."
                 logger.error(session.error_message)
                 return session
 
@@ -280,14 +350,52 @@ class WBAuthService:
 
     async def _find_phone_input(self, page: Page) -> Optional[Any]:
         """Найти поле ввода телефона"""
+        # Сначала пробуем комбинированный селектор
         try:
-            return await page.wait_for_selector(
+            element = await page.wait_for_selector(
                 self.SELECTORS['phone_input'],
                 timeout=10000,
                 state='visible'
             )
+            if element:
+                logger.info("Найдено поле телефона через комбинированный селектор")
+                return element
         except PlaywrightTimeout:
-            return None
+            logger.warning("Комбинированный селектор не сработал, пробуем по одному")
+
+        # Пробуем каждый селектор отдельно
+        individual_selectors = [
+            'input[type="tel"]',
+            'input[autocomplete="tel"]',
+            'input[name="phone"]',
+            'input[placeholder*="телефон" i]',
+            'input[class*="phone" i]',
+            '#phone',
+            '[data-testid*="phone"] input',
+        ]
+
+        for selector in individual_selectors:
+            try:
+                element = await page.query_selector(selector)
+                if element and await element.is_visible():
+                    logger.info(f"Найдено поле телефона через: {selector}")
+                    return element
+            except Exception as e:
+                logger.debug(f"Селектор {selector} не сработал: {e}")
+
+        # Последняя попытка - найти любой видимый input
+        try:
+            inputs = await page.query_selector_all('input:visible')
+            logger.info(f"Найдено {len(inputs)} видимых input элементов")
+            for inp in inputs:
+                input_type = await inp.get_attribute('type') or 'text'
+                if input_type in ['tel', 'text', 'number']:
+                    logger.info(f"Используем input type={input_type} как поле телефона")
+                    return inp
+        except Exception as e:
+            logger.error(f"Ошибка при поиске input: {e}")
+
+        return None
 
     async def _find_code_input(self, page: Page) -> Optional[Any]:
         """Найти поле ввода SMS кода"""

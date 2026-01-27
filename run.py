@@ -20,7 +20,49 @@ import asyncio
 import logging
 import sys
 import os
+import subprocess
 print("📦 Core imports OK", flush=True)
+
+
+def install_playwright_browsers():
+    """Установка браузеров Playwright (для Railway)"""
+    print("🎭 Проверка/установка Playwright browsers...", flush=True)
+    try:
+        # Проверяем, установлен ли Chromium
+        result = subprocess.run(
+            ["python3", "-m", "playwright", "install", "chromium"],
+            capture_output=True,
+            text=True,
+            timeout=300  # 5 минут на установку
+        )
+        if result.returncode == 0:
+            print("✅ Playwright Chromium установлен", flush=True)
+        else:
+            print(f"⚠️ Playwright install output: {result.stderr}", flush=True)
+
+        # Устанавливаем системные зависимости
+        result_deps = subprocess.run(
+            ["python3", "-m", "playwright", "install-deps", "chromium"],
+            capture_output=True,
+            text=True,
+            timeout=300
+        )
+        if result_deps.returncode == 0:
+            print("✅ Playwright dependencies установлены", flush=True)
+        else:
+            # На Railway это может не сработать, но основной браузер должен быть
+            print(f"⚠️ install-deps (может быть OK): {result_deps.stderr[:200] if result_deps.stderr else 'no output'}", flush=True)
+
+    except subprocess.TimeoutExpired:
+        print("⚠️ Playwright install timeout (продолжаем запуск)", flush=True)
+    except FileNotFoundError:
+        print("⚠️ Playwright не найден, попробуем запуск без браузеров", flush=True)
+    except Exception as e:
+        print(f"⚠️ Playwright setup error: {e}", flush=True)
+
+
+# Устанавливаем браузеры при запуске
+install_playwright_browsers()
 
 from threading import Thread
 import uvicorn

@@ -85,9 +85,11 @@ async def process_phone(message: Message, state: FSMContext):
         return
 
     await message.answer(
-        f"Номер: {normalized_phone}\n\n"
-        f"Открываю страницу авторизации WB...\n"
-        f"Это может занять несколько секунд."
+        f"📱 Номер: {normalized_phone}\n\n"
+        f"⏳ Отправляю запрос на SMS код...\n"
+        f"📩 SMS придёт от <b>Вал Борис</b>\n\n"
+        f"Напишите 6-значный код из SMS сюда в чат.",
+        parse_mode="HTML"
     )
 
     try:
@@ -99,8 +101,10 @@ async def process_phone(message: Message, state: FSMContext):
             await state.update_data(phone=normalized_phone)
             await state.set_state(AuthStates.waiting_code)
             await message.answer(
-                f"SMS с кодом отправлено на {normalized_phone}\n\n"
-                f"Введите 6-значный код из SMS:"
+                f"✅ SMS отправлено!\n\n"
+                f"📩 Код придёт от <b>Вал Борис</b>\n"
+                f"Напишите 6 цифр из SMS:",
+                parse_mode="HTML"
             )
         elif session.status == AuthStatus.FAILED:
             await state.clear()
