@@ -154,6 +154,15 @@ async def process_code(message: Message, state: FSMContext):
         if session.status == AuthStatus.SUCCESS:
             # Успешная авторизация - сохраняем сессию
             cookies_json = auth_service._browser_service.serialize_cookies(session.cookies) if auth_service._browser_service else ""
+
+            # Проверка что cookies не пустые
+            if not cookies_json:
+                logger.error(f"Cookies пусты для user_id={user_id}, сессия не может быть сохранена")
+                await message.answer("Ошибка сохранения сессии. Попробуйте авторизоваться заново: /auth")
+                await state.clear()
+                await auth_service.close_session(user_id)
+                return
+
             cookies_encrypted = encrypt_token(cookies_json)
 
             # Сохраняем в БД

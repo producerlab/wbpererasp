@@ -16,7 +16,7 @@ import logging
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
+from typing import Optional, Any
 
 from playwright.async_api import BrowserContext, Page, TimeoutError as PlaywrightTimeout
 
@@ -278,7 +278,7 @@ class WBAuthService:
             logger.error(f"Ошибка при вводе кода: {e}")
             return session
 
-    async def _find_phone_input(self, page: Page) -> Optional[any]:
+    async def _find_phone_input(self, page: Page) -> Optional[Any]:
         """Найти поле ввода телефона"""
         try:
             return await page.wait_for_selector(
@@ -289,7 +289,7 @@ class WBAuthService:
         except PlaywrightTimeout:
             return None
 
-    async def _find_code_input(self, page: Page) -> Optional[any]:
+    async def _find_code_input(self, page: Page) -> Optional[Any]:
         """Найти поле ввода SMS кода"""
         try:
             return await page.wait_for_selector(
@@ -300,7 +300,7 @@ class WBAuthService:
         except PlaywrightTimeout:
             return None
 
-    async def _find_submit_button(self, page: Page) -> Optional[any]:
+    async def _find_submit_button(self, page: Page) -> Optional[Any]:
         """Найти кнопку отправки"""
         try:
             return await page.wait_for_selector(

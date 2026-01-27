@@ -208,8 +208,8 @@ class WBRedistributionService:
                 if search_btn:
                     await search_btn.click()
                     await browser.human_delay(2000, 3000)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Кнопка поиска недоступна или ошибка клика: {e}")
 
             # Проверяем результат
             error = await self._check_error(page)
@@ -387,8 +387,8 @@ class WBRedistributionService:
             error_element = await page.query_selector(self.SELECTORS['error_message'])
             if error_element:
                 return await error_element.inner_text()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Не удалось проверить ошибку на странице: {e}")
         return None
 
     def _extract_supply_id(self, text: str) -> Optional[str]:

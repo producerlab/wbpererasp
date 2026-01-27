@@ -302,6 +302,7 @@ class BrowserService:
 
 # Singleton instance для переиспользования
 _browser_service: Optional[BrowserService] = None
+_browser_lock = asyncio.Lock()
 
 
 async def get_browser_service(headless: bool = True) -> BrowserService:
@@ -316,9 +317,10 @@ async def get_browser_service(headless: bool = True) -> BrowserService:
     """
     global _browser_service
 
-    if _browser_service is None:
-        _browser_service = BrowserService(headless=headless)
-        await _browser_service.start()
+    async with _browser_lock:
+        if _browser_service is None:
+            _browser_service = BrowserService(headless=headless)
+            await _browser_service.start()
 
     return _browser_service
 

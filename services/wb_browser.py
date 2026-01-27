@@ -201,9 +201,9 @@ class WBBrowserClient:
                     logger.error("Failed to request SMS code before login")
                     return None
 
-            # Ждем поле для SMS кода
+            # Ждем поле для SMS кода (может быть type="tel" или type="text")
             sms_input = await self.page.wait_for_selector(
-                'input[type="text"][maxlength="6"], input[name="code"], input[placeholder*="код"]',
+                'input[type="tel"][maxlength="6"], input[type="text"][maxlength="6"], input[name="code"], input[placeholder*="код"]',
                 timeout=10000
             )
 
