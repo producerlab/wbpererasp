@@ -59,35 +59,6 @@ CREATE TABLE IF NOT EXISTS redistribution_requests (
 );
 
 -- ========================================
--- Мониторинг складов
--- ========================================
-CREATE TABLE IF NOT EXISTS warehouse_monitoring (
-    id SERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
-    warehouse_id INTEGER NOT NULL,
-    warehouse_name VARCHAR(255) NOT NULL,
-    auto_book BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(user_id, warehouse_id)
-);
-
--- ========================================
--- История бронирований
--- ========================================
-CREATE TABLE IF NOT EXISTS booking_history (
-    id SERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
-    warehouse_id INTEGER NOT NULL,
-    warehouse_name VARCHAR(255) NOT NULL,
-    date DATE NOT NULL,
-    coefficient DECIMAL(5,2) NOT NULL,
-    supply_id VARCHAR(255),
-    success BOOLEAN DEFAULT FALSE,
-    error_message TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- ========================================
 -- Индексы для производительности
 -- ========================================
 CREATE INDEX IF NOT EXISTS idx_users_telegram_id ON users(telegram_id);
@@ -95,5 +66,3 @@ CREATE INDEX IF NOT EXISTS idx_tokens_user_id ON wb_api_tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_suppliers_user_id ON suppliers(user_id);
 CREATE INDEX IF NOT EXISTS idx_requests_user_id ON redistribution_requests(user_id);
 CREATE INDEX IF NOT EXISTS idx_requests_status ON redistribution_requests(status);
-CREATE INDEX IF NOT EXISTS idx_monitoring_user_id ON warehouse_monitoring(user_id);
-CREATE INDEX IF NOT EXISTS idx_booking_user_id ON booking_history(user_id);

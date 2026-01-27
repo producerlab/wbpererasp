@@ -42,20 +42,9 @@ class Config:
         'WB_SUPPLIES_URL', 'https://supplies-api.wildberries.ru'
     )
 
-    # Системный токен для мониторинга (опционально)
-    WB_SYSTEM_TOKEN: str = os.getenv('WB_SYSTEM_TOKEN', '')
-
-    # ========== МОНИТОРИНГ ==========
-    COEFFICIENT_POLL_INTERVAL: int = int(
-        os.getenv('COEFFICIENT_POLL_INTERVAL', '10')
-    )
-    COEFFICIENT_RATE_LIMIT: int = int(
-        os.getenv('COEFFICIENT_RATE_LIMIT', '6')
-    )
-    NOTIFICATION_COOLDOWN_MINUTES: int = int(
-        os.getenv('NOTIFICATION_COOLDOWN_MINUTES', '10')
-    )
-    ENABLE_MONITORING: bool = False  # МОНИТОРИНГ ОТКЛЮЧЕН НАВСЕГДА
+    # ========== RATE LIMITING ==========
+    WB_RATE_LIMIT_REQUESTS: int = int(os.getenv('WB_RATE_LIMIT_REQUESTS', '10'))
+    WB_RATE_LIMIT_PERIOD: int = int(os.getenv('WB_RATE_LIMIT_PERIOD', '60'))
 
     # ========== ШИФРОВАНИЕ ==========
     WB_ENCRYPTION_KEY: str = os.getenv('WB_ENCRYPTION_KEY', '')
@@ -63,17 +52,6 @@ class Config:
     # ========== REDIS (опционально) ==========
     REDIS_URL: str = os.getenv('REDIS_URL', '')
 
-    # ========== АВТОБРОНИРОВАНИЕ ==========
-    AUTO_BOOK_MAX_COEFFICIENT: float = float(
-        os.getenv('AUTO_BOOK_MAX_COEFFICIENT', '1.0')
-    )
-    AUTO_BOOK_DAILY_LIMIT: int = int(
-        os.getenv('AUTO_BOOK_DAILY_LIMIT', '5')
-    )
-
-    # ========== RATE LIMITING ==========
-    RATE_LIMIT_REQUESTS: int = int(os.getenv('RATE_LIMIT_REQUESTS', '10'))
-    RATE_LIMIT_HOURS: int = int(os.getenv('RATE_LIMIT_HOURS', '1'))
 
     @classmethod
     def validate(cls) -> None:
@@ -96,12 +74,6 @@ class Config:
                 "   Сгенерируйте новый ключ: python scripts/setup.py"
             )
 
-        # Предупреждения (не блокируют запуск)
-        if not cls.WB_SYSTEM_TOKEN:
-            warnings.append(
-                "WB_SYSTEM_TOKEN не задан - глобальный мониторинг будет недоступен"
-            )
-
         if warnings:
             import logging
             logger = logging.getLogger(__name__)
@@ -122,10 +94,7 @@ class Config:
 База данных: {cls.DATABASE_PATH}
 
 === WB API ===
-Poll interval: {cls.COEFFICIENT_POLL_INTERVAL} сек
-Rate limit: {cls.COEFFICIENT_RATE_LIMIT} req/min
-Автобронь макс. коэфф.: {cls.AUTO_BOOK_MAX_COEFFICIENT}
-Системный токен: {'Настроен' if cls.WB_SYSTEM_TOKEN else 'Не настроен'}
+Rate limit: {cls.WB_RATE_LIMIT_REQUESTS} req/{cls.WB_RATE_LIMIT_PERIOD}s
 Redis: {'Настроен' if cls.REDIS_URL else 'Не настроен'}
 ==========================================
 """
