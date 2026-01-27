@@ -11,7 +11,7 @@ import logging
 from io import BytesIO
 
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, BufferedInputFile
+from aiogram.types import Message, CallbackQuery, BufferedInputFile, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -60,20 +60,44 @@ async def cmd_auth(message: Message, state: FSMContext):
         text += "Отправьте номер телефона для новой авторизации или /sessions для списка.\n\n"
 
     text += (
-        "💡 Можете использовать номер менеджера.\n\n"
-        "📱 Отправьте номер телефона:\n"
+        "📱 <b>Нажмите кнопку ниже</b> или введите номер вручную:\n"
         "<code>+79001234567</code> или <code>89001234567</code>"
     )
 
+    # Кнопка "Поделиться номером телефона"
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📱 Поделиться номером", request_contact=True)]
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True
+    )
+
     await state.set_state(AuthStates.waiting_phone)
-    await message.answer(text, parse_mode="HTML")
+    await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
+
+
+@router.message(AuthStates.waiting_phone, F.contact)
+async def process_phone_contact(message: Message, state: FSMContext):
+    """Обработка номера телефона через кнопку 'Поделиться'"""
+    user_id = message.from_user.id
+    phone = message.contact.phone_number
+    await _process_phone_auth(message, state, phone)
 
 
 @router.message(AuthStates.waiting_phone)
-async def process_phone(message: Message, state: FSMContext):
-    """Обработка введённого номера телефона"""
-    user_id = message.from_user.id
+async def process_phone_text(message: Message, state: FSMContext):
+    """Обработка введённого номера телефона вручную"""
+    if not message.text:
+        await message.answer("Отправьте номер телефона или нажмите кнопку ниже.")
+        return
     phone = message.text.strip()
+    await _process_phone_auth(message, state, phone)
+
+
+async def _process_phone_auth(message: Message, state: FSMContext, phone: str):
+    """Общая логика авторизации по номеру телефона"""
+    user_id = message.from_user.id
     db = get_db()
 
     # Валидация номера
@@ -84,17 +108,20 @@ async def process_phone(message: Message, state: FSMContext):
         await message.answer(
             f"Некорректный номер телефона.\n\n"
             f"Отправьте номер в формате:\n"
-            f"+79001234567 или 89001234567"
+            f"+79001234567 или 89001234567",
+            reply_markup=ReplyKeyboardRemove()
         )
         return
 
+    # Убираем клавиатуру с кнопкой
     await message.answer(
         f"📱 Номер: <code>{normalized_phone}</code>\n\n"
         f"⏳ Запрашиваю SMS код...\n\n"
         f"🔒 Код одноразовый — после ввода он больше не действует.\n"
         f"📩 SMS придёт от <b>Wildberries</b>\n\n"
         f"Напишите 6-значный код из SMS сюда в чат.",
-        parse_mode="HTML"
+        parse_mode="HTML",
+        reply_markup=ReplyKeyboardRemove()
     )
 
     try:
