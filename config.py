@@ -55,7 +55,7 @@ class Config:
     NOTIFICATION_COOLDOWN_MINUTES: int = int(
         os.getenv('NOTIFICATION_COOLDOWN_MINUTES', '10')
     )
-    ENABLE_MONITORING: bool = os.getenv('ENABLE_MONITORING', 'true').lower() == 'true'
+    ENABLE_MONITORING: bool = False  # МОНИТОРИНГ ОТКЛЮЧЕН НАВСЕГДА
 
     # ========== ШИФРОВАНИЕ ==========
     WB_ENCRYPTION_KEY: str = os.getenv('WB_ENCRYPTION_KEY', '')
