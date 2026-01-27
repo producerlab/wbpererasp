@@ -24,6 +24,7 @@ from db_factory import get_database
 from handlers import token_router, supplier_router, redistribution_router
 from handlers.token_management import TokenStates
 from wb_api.client import WBApiClient
+from utils.encryption import encrypt_token
 from aiogram.fsm.context import FSMContext
 
 # Настройка логирования
@@ -192,14 +193,20 @@ async def handle_token_auto(message: Message, state: FSMContext):
 
     # Сохраняем токен
     try:
+        logger.info(f"Encrypting token...")
         encrypted = encrypt_token(text)
+        logger.info(f"Token encrypted, saving to DB...")
+
         token_id = db.add_wb_token(user_id, encrypted, supplier_name)
+        logger.info(f"add_wb_token returned: {token_id}")
 
         if not token_id:
+            logger.warning("Token already exists (add_wb_token returned None/False)")
             await status_msg.edit_text("❌ Этот токен уже добавлен.")
             return
 
         # Добавляем поставщика
+        logger.info(f"Adding supplier with name: {supplier_name}, token_id: {token_id}")
         supplier_id = db.add_supplier(user_id=user_id, name=supplier_name, token_id=token_id)
         logger.info(f"Token {token_id} and supplier {supplier_id} added successfully")
 
