@@ -52,6 +52,10 @@ class Config:
     COEFFICIENT_RATE_LIMIT: int = int(
         os.getenv('COEFFICIENT_RATE_LIMIT', '6')
     )
+    NOTIFICATION_COOLDOWN_MINUTES: int = int(
+        os.getenv('NOTIFICATION_COOLDOWN_MINUTES', '10')
+    )
+    ENABLE_MONITORING: bool = os.getenv('ENABLE_MONITORING', 'true').lower() == 'true'
 
     # ========== ШИФРОВАНИЕ ==========
     WB_ENCRYPTION_KEY: str = os.getenv('WB_ENCRYPTION_KEY', '')

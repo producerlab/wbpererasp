@@ -49,16 +49,41 @@ booking_service: Optional[SlotBookingService] = None
 
 
 async def on_coefficient_change(event: MonitoringEvent):
-    """Обработчик изменения коэффициентов"""
+    """
+    Обработчик изменения коэффициентов.
+
+    Фильтрует незначимые изменения и применяет cooldown.
+    """
     change = event.change
     subscriptions = event.subscriptions
 
+    # Фильтруем незначимые изменения
+    coeff_diff = abs(change.new_coefficient - change.old_coefficient)
+
+    # Уведомляем только если:
+    # 1. Коэффициент стал бесплатным (0)
+    # 2. Коэффициент стал очень выгодным (≤ 0.5)
+    # 3. Изменение больше 0.2 (значимое)
+    is_significant = (
+        change.new_coefficient == 0 or  # Бесплатно!
+        (change.new_coefficient <= 0.5 and change.old_coefficient > 0.5) or  # Стало очень выгодно
+        (change.new_coefficient >= 0 and change.old_coefficient < 0) or  # Стало доступно
+        coeff_diff >= 0.2  # Значимое изменение
+    )
+
+    if not is_significant:
+        logger.debug(
+            f"Skipping insignificant change: {change.warehouse_name} "
+            f"{change.old_coefficient} -> {change.new_coefficient} (diff: {coeff_diff})"
+        )
+        return
+
     logger.info(
-        f"Coefficient change: {change.warehouse_name} "
+        f"Significant coefficient change: {change.warehouse_name} "
         f"{change.old_coefficient} -> {change.new_coefficient}"
     )
 
-    # Отправляем уведомления всем подписчикам
+    # Отправляем уведомления всем подписчикам (с cooldown внутри)
     await notification_service.broadcast_to_subscribers(subscriptions, change)
 
     # Автобронирование для тех, кто включил
@@ -269,24 +294,50 @@ async def handle_text_message(message: Message, state: FSMContext):
 
 
 async def start_monitoring():
-    """Запускает фоновый мониторинг коэффициентов"""
+    """
+    Запускает фоновый мониторинг коэффициентов.
+
+    Поддерживает два режима:
+    1. Глобальный (если есть WB_SYSTEM_TOKEN) - эффективно для всех пользователей
+    2. Персональный (fallback) - по токену для каждого пользователя с подпиской
+    """
     global monitor
 
-    # Для мониторинга нужен системный токен
-    # В реальном приложении можно использовать токен первого админа
-    # или отдельный системный токен
-    system_token = Config.WB_SYSTEM_TOKEN if hasattr(Config, 'WB_SYSTEM_TOKEN') else None
-
-    if not system_token:
-        logger.warning(
-            "WB_SYSTEM_TOKEN not configured. "
-            "Monitoring will use user tokens on demand."
-        )
+    # Проверяем глобальный флаг
+    if not Config.ENABLE_MONITORING:
+        logger.info("Monitoring is DISABLED in config (ENABLE_MONITORING=false)")
         return
 
-    monitor = CoefficientMonitor(db, system_token)
-    monitor.on_change(on_coefficient_change)
-    await monitor.start()
+    system_token = Config.WB_SYSTEM_TOKEN if hasattr(Config, 'WB_SYSTEM_TOKEN') else None
+
+    if system_token:
+        # РЕЖИМ 1: Глобальный мониторинг (оптимально)
+        logger.info("Starting GLOBAL monitoring with system token")
+        monitor = CoefficientMonitor(db, system_token)
+        monitor.on_change(on_coefficient_change)
+        await monitor.start()
+    else:
+        # РЕЖИМ 2: Персональный мониторинг (fallback)
+        logger.warning(
+            "WB_SYSTEM_TOKEN not configured. "
+            "Starting MULTI-USER monitoring mode (uses user tokens)."
+        )
+
+        # Получаем всех пользователей с активными подписками на мониторинг
+        # В будущем можно добавить метод db.get_users_with_active_monitoring()
+        # Пока просто логируем предупреждение
+        logger.warning(
+            "Multi-user monitoring requires implementation. "
+            "For now, please configure WB_SYSTEM_TOKEN in .env"
+        )
+
+        # TODO: Реализовать персональный мониторинг
+        # Пример архитектуры:
+        # 1. db.get_users_with_active_monitoring() -> список user_id
+        # 2. Для каждого user_id получить его токен
+        # 3. Создать отдельный CoefficientMonitor с очередью запросов
+        # 4. Управление rate limiting через Redis (5-6 req/min на всех)
+        return
 
 
 async def main():
@@ -309,7 +360,10 @@ async def main():
     )
 
     # Инициализация сервисов
-    notification_service = NotificationService(bot)
+    notification_service = NotificationService(
+        bot,
+        cooldown_minutes=Config.NOTIFICATION_COOLDOWN_MINUTES
+    )
     booking_service = SlotBookingService(db)
 
     # Диспетчер
@@ -332,8 +386,8 @@ async def main():
 
     logger.info("Handlers registered")
 
-    # Запуск мониторинга (опционально)
-    # await start_monitoring()
+    # Запуск мониторинга коэффициентов
+    await start_monitoring()
 
     # Запуск бота
     print("\n✅ Бот успешно запущен!")

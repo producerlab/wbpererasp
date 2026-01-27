@@ -609,3 +609,173 @@ async def callback_dismiss(callback: CallbackQuery):
         await callback.message.delete()
     except Exception:
         pass
+
+
+@router.callback_query(F.data == "edit_subscriptions")
+async def callback_edit_subscriptions(callback: CallbackQuery):
+    """Управление существующими подписками"""
+    await callback.answer()
+
+    db = get_db()
+    user_id = callback.from_user.id
+
+    subscriptions = db.get_user_subscriptions(user_id)
+
+    if not subscriptions:
+        await callback.message.edit_text(
+            "У вас нет активных подписок.\n\n"
+            "Используйте /monitor чтобы создать новую.",
+            parse_mode='HTML'
+        )
+        return
+
+    # Показываем список подписок с кнопками управления
+    buttons = []
+
+    for sub in subscriptions:
+        status = "✅" if sub['is_active'] else "❌"
+        auto = "🤖" if sub['auto_book'] else "📢"
+        wh_count = len(sub['warehouse_ids'])
+
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"{status} {auto} Подписка #{sub['id']} ({wh_count} складов)",
+                callback_data=f"manage_sub:{sub['id']}"
+            )
+        ])
+
+    buttons.append([
+        InlineKeyboardButton(
+            text="« Назад",
+            callback_data="back_to_monitor"
+        )
+    ])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    await callback.message.edit_text(
+        "📊 <b>Управление подписками</b>\n\n"
+        "Выберите подписку для управления:\n\n"
+        "✅ - активна | ❌ - отключена\n"
+        "🤖 - автобронь | 📢 - только уведомления",
+        parse_mode='HTML',
+        reply_markup=keyboard
+    )
+
+
+@router.callback_query(F.data.startswith("manage_sub:"))
+async def callback_manage_subscription(callback: CallbackQuery):
+    """Управление конкретной подпиской"""
+    await callback.answer()
+
+    sub_id = int(callback.data.split(":")[1])
+    db = get_db()
+
+    # Получаем подписку
+    subscription = db.get_subscription_by_id(sub_id)
+
+    if not subscription:
+        await callback.message.edit_text("Подписка не найдена.")
+        return
+
+    # Формируем информацию
+    warehouse_names = [
+        name for wh_id, name in POPULAR_WAREHOUSES
+        if wh_id in subscription['warehouse_ids']
+    ]
+
+    status = "активна" if subscription['is_active'] else "отключена"
+    auto = "включено" if subscription['auto_book'] else "отключено"
+
+    text = f"""
+📊 <b>Подписка #{sub_id}</b>
+
+<b>Статус:</b> {status}
+<b>Склады:</b> {', '.join(warehouse_names) if warehouse_names else 'Нет'}
+<b>Коэффициенты:</b> {', '.join(map(str, subscription['target_coefficients']))}
+<b>Автобронирование:</b> {auto}
+"""
+
+    # Кнопки управления
+    buttons = []
+
+    if subscription['is_active']:
+        buttons.append([
+            InlineKeyboardButton(
+                text="⏸ Приостановить",
+                callback_data=f"pause_sub:{sub_id}"
+            )
+        ])
+    else:
+        buttons.append([
+            InlineKeyboardButton(
+                text="▶️ Возобновить",
+                callback_data=f"resume_sub:{sub_id}"
+            )
+        ])
+
+    buttons.append([
+        InlineKeyboardButton(
+            text="🗑 Удалить подписку",
+            callback_data=f"delete_sub:{sub_id}"
+        )
+    ])
+
+    buttons.append([
+        InlineKeyboardButton(
+            text="« К списку подписок",
+            callback_data="edit_subscriptions"
+        )
+    ])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    await callback.message.edit_text(text, parse_mode='HTML', reply_markup=keyboard)
+
+
+@router.callback_query(F.data.startswith("pause_sub:"))
+async def callback_pause_subscription(callback: CallbackQuery):
+    """Приостановка подписки"""
+    sub_id = int(callback.data.split(":")[1])
+    db = get_db()
+
+    db.toggle_subscription(sub_id, is_active=False)
+
+    await callback.answer("Подписка приостановлена")
+    await callback_manage_subscription(callback)
+
+
+@router.callback_query(F.data.startswith("resume_sub:"))
+async def callback_resume_subscription(callback: CallbackQuery):
+    """Возобновление подписки"""
+    sub_id = int(callback.data.split(":")[1])
+    db = get_db()
+
+    db.toggle_subscription(sub_id, is_active=True)
+
+    await callback.answer("Подписка возобновлена")
+    await callback_manage_subscription(callback)
+
+
+@router.callback_query(F.data.startswith("delete_sub:"))
+async def callback_delete_subscription(callback: CallbackQuery):
+    """Удаление подписки"""
+    sub_id = int(callback.data.split(":")[1])
+    db = get_db()
+
+    db.delete_subscription(sub_id)
+
+    await callback.answer("Подписка удалена")
+    await callback.message.edit_text(
+        "✅ Подписка удалена\n\n"
+        "Вы больше не будете получать уведомления по этой подписке.\n\n"
+        "Используйте /monitor чтобы создать новую."
+    )
+
+
+@router.callback_query(F.data == "back_to_monitor")
+async def callback_back_to_monitor(callback: CallbackQuery):
+    """Возврат к главному меню мониторинга"""
+    await callback.answer()
+    # Эмулируем команду /monitor
+    await cmd_monitor(callback.message)

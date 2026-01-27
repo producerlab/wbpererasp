@@ -508,6 +508,36 @@ class Database:
         """Деактивирует подписку"""
         return self.update_subscription(subscription_id, is_active=0)
 
+    def get_subscription_by_id(self, subscription_id: int) -> Optional[Dict]:
+        """Получает подписку по ID"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT * FROM monitoring_subscriptions
+                WHERE id = ?
+            ''', (subscription_id,))
+            row = cursor.fetchone()
+            if row:
+                d = dict(row)
+                d['warehouse_ids'] = json.loads(d['warehouse_ids'])
+                d['target_coefficients'] = json.loads(d['target_coefficients'])
+                return d
+            return None
+
+    def toggle_subscription(self, subscription_id: int, is_active: bool) -> bool:
+        """Включает/выключает подписку"""
+        return self.update_subscription(subscription_id, is_active=1 if is_active else 0)
+
+    def delete_subscription(self, subscription_id: int) -> bool:
+        """Удаляет подписку"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                DELETE FROM monitoring_subscriptions
+                WHERE id = ?
+            ''', (subscription_id,))
+            return cursor.rowcount > 0
+
     # ==================== BOOKINGS ====================
 
     def add_booking(

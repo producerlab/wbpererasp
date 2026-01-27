@@ -2,48 +2,24 @@
 Handlers для перераспределения остатков между складами.
 
 Команды:
-- /redistribute - начать перераспределение
-- Callback handlers для инлайн-кнопок
+- /redistribute - открыть Mini App для создания заявки
+
+Перераспределение теперь доступно только через Mini App для единого UX.
 """
 
 import logging
-from typing import Dict, Any
 
-from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery
+from aiogram import Router
+from aiogram.types import Message, WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
 
 from database import Database
 from config import Config
-from services.redistribution_service import (
-    RedistributionService,
-    RedistributionRequest
-)
-from keyboards.redistribution import (
-    build_sku_selection_keyboard,
-    build_source_warehouse_keyboard,
-    build_target_warehouse_keyboard,
-    build_quantity_keyboard,
-    build_confirmation_keyboard,
-    build_result_keyboard
-)
 
 logger = logging.getLogger(__name__)
 
 router = Router(name="redistribution")
-
-
-class RedistributionStates(StatesGroup):
-    """Состояния FSM для перераспределения"""
-    selecting_supplier = State()
-    selecting_sku = State()
-    selecting_source = State()
-    selecting_target = State()
-    entering_quantity = State()
-    confirming = State()
-    waiting_quantity_input = State()
 
 
 def get_db() -> Database:
@@ -55,11 +31,14 @@ def get_db() -> Database:
 
 @router.message(Command("redistribute"))
 async def cmd_redistribute(message: Message, state: FSMContext):
-    """Команда /redistribute - начало перераспределения"""
+    """Команда /redistribute - открыть Mini App для перераспределения"""
+    # Очищаем состояние на всякий случай
+    await state.clear()
+
     db = get_db()
     user_id = message.from_user.id
 
-    # Получаем поставщиков пользователя
+    # Проверяем наличие токена
     suppliers = db.get_user_suppliers(user_id)
 
     if not suppliers:
@@ -69,39 +48,38 @@ async def cmd_redistribute(message: Message, state: FSMContext):
         )
         return
 
-    # Если один поставщик - используем его автоматически
-    if len(suppliers) == 1:
-        supplier = suppliers[0]
-        await state.update_data(supplier_id=supplier['id'])
-        await start_redistribution_for_supplier(message, state, supplier)
-        return
+    # Создаем кнопку для открытия Mini App
+    webapp_url = Config.WEBAPP_URL
 
-    # Несколько поставщиков - показываем выбор
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📦 Открыть форму перераспределения",
+                    web_app=WebAppInfo(url=webapp_url)
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📊 Просмотреть текущие заявки",
+                    web_app=WebAppInfo(url=webapp_url)
+                )
+            ]
+        ]
+    )
 
-    text = "📦 <b>Перераспределение остатков</b>\n\nВыберите поставщика:"
-    buttons = []
-
-    for supplier in suppliers:
-        emoji = "⭐" if supplier['is_default'] else "📦"
-        buttons.append([
-            InlineKeyboardButton(
-                text=f"{emoji} {supplier['name']}",
-                callback_data=f"redist_select_supplier:{supplier['id']}"
-            )
-        ])
-
-    buttons.append([
-        InlineKeyboardButton(
-            text="❌ Отмена",
-            callback_data="redist_cancel"
-        )
-    ])
-
-    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
-
-    await message.answer(text, parse_mode='HTML', reply_markup=keyboard)
-    await state.set_state(RedistributionStates.selecting_supplier)
+    await message.answer(
+        "📦 <b>Перераспределение остатков</b>\n\n"
+        "Для создания заявки на перемещение товаров между складами "
+        "используйте удобную визуальную форму в Mini App.\n\n"
+        "✅ Пошаговый мастер создания\n"
+        "✅ Автоматическая проверка остатков\n"
+        "✅ История всех заявок\n"
+        "✅ Отслеживание статуса\n\n"
+        "Нажмите кнопку ниже, чтобы открыть форму:",
+        parse_mode='HTML',
+        reply_markup=keyboard
+    )
 
 
 @router.callback_query(F.data.startswith("redist_select_supplier:"))

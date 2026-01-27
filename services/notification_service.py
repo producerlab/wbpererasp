@@ -5,12 +5,13 @@
 - Отправку уведомлений об изменении коэффициентов
 - Уведомления об успешном/неуспешном бронировании
 - Форматирование сообщений
+- Cooldown для предотвращения спама
 """
 
 import asyncio
 import logging
 from typing import List, Dict, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from aiogram import Bot
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -30,8 +31,51 @@ class NotificationService:
         await service.notify_coefficient_change(user_id, change)
     """
 
-    def __init__(self, bot: Bot):
+    def __init__(self, bot: Bot, cooldown_minutes: int = 10):
+        """
+        Args:
+            bot: Экземпляр Telegram бота
+            cooldown_minutes: Минимальный интервал между уведомлениями для одного склада (минуты)
+        """
         self.bot = bot
+        self.cooldown_minutes = cooldown_minutes
+
+        # Кэш последних уведомлений: {user_id: {warehouse_id: datetime}}
+        self._last_notifications: Dict[int, Dict[int, datetime]] = {}
+
+    def _can_notify(self, user_id: int, warehouse_id: int) -> bool:
+        """
+        Проверяет можно ли отправить уведомление (cooldown).
+
+        Args:
+            user_id: ID пользователя
+            warehouse_id: ID склада
+
+        Returns:
+            True если можно отправить, False если нужно подождать
+        """
+        now = datetime.now()
+
+        # Проверяем есть ли запись о предыдущем уведомлении
+        if user_id not in self._last_notifications:
+            self._last_notifications[user_id] = {}
+
+        user_notifications = self._last_notifications[user_id]
+
+        if warehouse_id in user_notifications:
+            last_time = user_notifications[warehouse_id]
+            time_passed = (now - last_time).total_seconds() / 60  # в минутах
+
+            if time_passed < self.cooldown_minutes:
+                logger.debug(
+                    f"Cooldown active for user {user_id}, warehouse {warehouse_id}. "
+                    f"Time passed: {time_passed:.1f} min, need: {self.cooldown_minutes} min"
+                )
+                return False
+
+        # Обновляем время последнего уведомления
+        user_notifications[warehouse_id] = now
+        return True
 
     async def notify_coefficient_change(
         self,
@@ -47,6 +91,10 @@ class NotificationService:
             change: Информация об изменении
             can_auto_book: Показывать ли кнопку автобронирования
         """
+        # Проверяем cooldown
+        if not self._can_notify(user_id, change.warehouse_id):
+            logger.debug(f"Skipping notification for user {user_id} due to cooldown")
+            return
         # Определяем эмодзи по типу изменения
         if change.new_coefficient == 0:
             emoji = "🆓"
