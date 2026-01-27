@@ -135,8 +135,107 @@ async def cmd_stats(message: Message):
     )
 
 
-# УДАЛЕНО: Старый обработчик добавления токена через текстовое сообщение
-# Теперь используется только handlers/token_management.py с автоматическим получением названия
+async def handle_token_auto(message: Message, state: FSMContext):
+    """
+    Автоматический обработчик WB API токена.
+    Срабатывает когда пользователь отправляет длинную строку (>50 символов).
+    """
+    text = message.text.strip()
+    user_id = message.from_user.id
+
+    # Проверяем, что это похоже на токен (длинная строка)
+    if len(text) < 50:
+        return  # Слишком короткое - игнорируем
+
+    # Проверяем, есть ли уже токен у пользователя
+    tokens = db.get_wb_tokens(user_id)
+    if len(tokens) > 0:
+        # Токен уже есть - игнорируем (пусть другие handlers обрабатывают)
+        return
+
+    # Удаляем сообщение с токеном (безопасность)
+    try:
+        await message.delete()
+    except Exception as e:
+        logger.error(f"Failed to delete token message: {e}")
+
+    # Проверяем и сохраняем токен
+    status_msg = await message.answer("🔄 Проверяю токен и получаю информацию о магазине...")
+    logger.info(f"Auto-processing token for user {user_id}, length: {len(text)}")
+
+    supplier_name = "Мой магазин"  # Дефолт
+
+    try:
+        async with WBApiClient(text) as client:
+            is_valid = await client.check_token()
+
+            if not is_valid:
+                await status_msg.edit_text(
+                    "❌ Токен невалиден.\n\n"
+                    "Убедитесь, что токен:\n"
+                    "• Скопирован полностью\n"
+                    "• Не истёк срок действия\n"
+                    "• Есть права: Маркетплейс, Поставки\n\n"
+                    "Попробуйте ещё раз или /token для помощи.",
+                    parse_mode=ParseMode.HTML
+                )
+                return
+
+            # Получаем название автоматически
+            supplier_info = await client.get_supplier_info()
+            if supplier_info and supplier_info.get("name"):
+                supplier_name = supplier_info["name"]
+                logger.info(f"Got supplier name: {supplier_name}")
+
+    except Exception as e:
+        logger.error(f"Token validation failed: {e}", exc_info=True)
+
+    # Сохраняем токен
+    try:
+        encrypted = encrypt_token(text)
+        token_id = db.add_wb_token(user_id, encrypted, supplier_name)
+
+        if not token_id:
+            await status_msg.edit_text("❌ Этот токен уже добавлен.")
+            return
+
+        # Добавляем поставщика
+        supplier_id = db.add_supplier(user_id=user_id, name=supplier_name, token_id=token_id)
+        logger.info(f"Token {token_id} and supplier {supplier_id} added successfully")
+
+        # Показываем кнопку Mini App
+        webapp_url = Config.WEBAPP_URL
+        if webapp_url and webapp_url.startswith("https://"):
+            full_url = f"{webapp_url.rstrip('/')}/webapp/index.html"
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="📦 Открыть Перераспределение",
+                    web_app=WebAppInfo(url=full_url)
+                )]
+            ])
+            await status_msg.edit_text(
+                f"✅ <b>Токен успешно добавлен!</b>\n\n"
+                f"📛 Магазин: {supplier_name}\n"
+                f"🆔 ID: {token_id}\n\n"
+                f"Теперь откройте Mini App для перераспределения остатков:",
+                parse_mode=ParseMode.HTML,
+                reply_markup=keyboard
+            )
+        else:
+            await status_msg.edit_text(
+                f"✅ <b>Токен добавлен!</b>\n\n"
+                f"📛 Магазин: {supplier_name}\n"
+                f"🆔 ID: {token_id}\n\n"
+                f"Используйте /redistribute",
+                parse_mode=ParseMode.HTML
+            )
+
+    except Exception as e:
+        logger.error(f"Failed to save token: {e}", exc_info=True)
+        await status_msg.edit_text(
+            f"❌ Ошибка сохранения токена.\n\n"
+            f"Попробуйте ещё раз или /token для помощи."
+        )
 
 
 async def main():
@@ -185,7 +284,8 @@ async def main():
     dp.include_router(supplier_router)
     dp.include_router(redistribution_router)
 
-    # УДАЛЕНО: handle_text_message - теперь используется только handlers/token_management.py
+    # Автоматический обработчик токенов (регистрируем ПОСЛЕДНИМ как catch-all)
+    dp.message.register(handle_token_auto)
 
     logger.info("Handlers registered")
 
