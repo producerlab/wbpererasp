@@ -337,48 +337,61 @@ class WBApiClient:
         """
         Получает информацию о поставщике (владельце токена).
 
+        Использует только базовые права токена (Маркетплейс + Поставки).
+
         Returns:
-            Dict с информацией: {"name": "Название магазина", "inn": "ИНН", ...}
+            Dict с информацией: {"name": "Название магазина"}
             None если не удалось получить
         """
         try:
-            # Пробуем разные endpoints для получения информации
-            # 1. Пробуем получить информацию через список офисов
-            try:
-                response = await self.get("/api/v3/offices", Endpoint.WAREHOUSES)
-                if response and len(response) > 0:
-                    office = response[0]
-                    return {
-                        "name": office.get("name", "Неизвестный поставщик"),
-                        "id": office.get("id"),
-                        "address": office.get("address")
-                    }
-            except Exception as e:
-                logger.debug(f"Failed to get offices: {e}")
-
-            # 2. Пробуем получить через склады (обычно содержат название продавца)
+            # Стратегия 1: Получить название через склады (/api/v1/warehouses)
+            # Требует права: "Поставки" (уже есть у базового токена)
             try:
                 warehouses = await self.get("/api/v1/warehouses", Endpoint.WAREHOUSES)
                 if warehouses and len(warehouses) > 0:
-                    # Берём первый склад и извлекаем название
                     first_wh = warehouses[0]
-                    # Обычно название склада содержит название магазина
                     wh_name = first_wh.get("name", "")
+
                     if wh_name:
-                        # Пробуем извлечь название магазина из названия склада
-                        # Например: "Магазин ООО - Склад Коледино" -> "Магазин ООО"
-                        parts = wh_name.split("-")
-                        supplier_name = parts[0].strip() if parts else wh_name
-                        return {
-                            "name": supplier_name[:50],  # Ограничиваем длину
-                            "warehouse_count": len(warehouses)
-                        }
+                        # Извлекаем название магазина из названия склада
+                        # Варианты форматов:
+                        # - "Магазин ООО - Коледино"
+                        # - "ИП Иванов - Склад 1"
+                        # - "COMPANY_NAME"
+                        if " - " in wh_name:
+                            supplier_name = wh_name.split(" - ")[0].strip()
+                        else:
+                            # Если нет разделителя, берём первое "слово" до склада
+                            supplier_name = wh_name.replace("Склад", "").strip()
+
+                        if supplier_name and len(supplier_name) > 2:
+                            logger.info(f"Extracted supplier name from warehouse: {supplier_name}")
+                            return {
+                                "name": supplier_name[:50],
+                                "source": "warehouses",
+                                "warehouse_count": len(warehouses)
+                            }
+            except WBNotFoundError:
+                logger.debug("Warehouses endpoint returned 404 (no warehouses configured)")
             except Exception as e:
                 logger.debug(f"Failed to get warehouses: {e}")
 
-            # 3. Если ничего не получилось - возвращаем дефолтное имя
-            return {"name": "Мой магазин"}
+            # Стратегия 2: Fallback - использовать ID токена как уникальный идентификатор
+            # Генерируем читаемое название из первых символов токена
+            try:
+                token_hash = self.token[:8] if len(self.token) >= 8 else "unknown"
+                fallback_name = f"Магазин {token_hash}"
+                logger.info(f"Using fallback supplier name: {fallback_name}")
+                return {
+                    "name": fallback_name,
+                    "source": "fallback"
+                }
+            except Exception:
+                pass
+
+            # Последний fallback
+            return {"name": "Мой магазин", "source": "default"}
 
         except Exception as e:
-            logger.error(f"Failed to get supplier info: {e}")
-            return None
+            logger.error(f"Failed to get supplier info: {e}", exc_info=True)
+            return {"name": "Мой магазин", "source": "error"}
