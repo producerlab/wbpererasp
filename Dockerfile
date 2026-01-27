@@ -13,31 +13,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Копируем весь код
 COPY . .
 
-# Создаем скрипт запуска для обоих сервисов
-COPY <<EOF /app/start.sh
-#!/bin/bash
-set -e
-
-echo "=== Starting services ==="
-echo "PORT: \${PORT:-8000}"
-
-# Запускаем FastAPI в фоне
-echo "Starting FastAPI..."
-uvicorn api.main:app --host 0.0.0.0 --port \${PORT:-8000} &
-API_PID=\$!
-echo "FastAPI started with PID \$API_PID"
-
-# Ждем 5 секунд
-sleep 5
-
-# Запускаем бота
-echo "Starting Telegram bot..."
-python3 bot.py
-
-# Если бот упал, убиваем API
-kill \$API_PID 2>/dev/null || true
-EOF
-
+# Делаем скрипт исполняемым
 RUN chmod +x /app/start.sh
 
 # Запускаем оба сервиса
