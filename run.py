@@ -46,6 +46,34 @@ async def run_telegram_bot():
 
 def main():
     """Главная функция запуска обоих сервисов"""
+    # КРИТИЧНО: Убиваем все старые процессы bot.py перед запуском
+    import subprocess
+    import os
+    try:
+        current_pid = os.getpid()
+        logger.info(f"Current process PID: {current_pid}")
+
+        # Находим все Python процессы
+        result = subprocess.run(
+            ["ps", "aux"],
+            capture_output=True,
+            text=True
+        )
+
+        for line in result.stdout.split('\n'):
+            if 'python' in line.lower() and 'bot.py' in line:
+                parts = line.split()
+                if len(parts) > 1:
+                    pid = int(parts[1])
+                    if pid != current_pid:
+                        logger.warning(f"Killing old bot process: PID {pid}")
+                        try:
+                            subprocess.run(["kill", "-9", str(pid)])
+                        except:
+                            pass
+    except Exception as e:
+        logger.warning(f"Failed to kill old processes: {e}")
+
     print("=" * 50)
     print("🚀 WB Redistribution Bot + API")
     print("=" * 50)

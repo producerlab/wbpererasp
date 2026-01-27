@@ -4,7 +4,7 @@
     "builder": "NIXPACKS"
   },
   "deploy": {
-    "startCommand": "python3 run.py",
+    "startCommand": "pkill -9 -f 'python.*bot.py' || true; pkill -9 -f 'python.*run.py' || true; sleep 2; python3 run.py",
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10
   }
