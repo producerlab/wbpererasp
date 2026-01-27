@@ -25,6 +25,8 @@ from handlers import token_router, supplier_router, monitoring_router, booking_r
 from services.coefficient_monitor import CoefficientMonitor, MonitoringEvent
 from services.notification_service import NotificationService
 from services.slot_booking import SlotBookingService
+from wb_api.client import WBApiClient
+from utils.encryption import encrypt_token
 
 # Настройка логирования
 logging.basicConfig(
@@ -140,18 +142,18 @@ async def cmd_start(message: Message):
             f"🚀 Автоматически бронировать выгодные слоты\n"
             f"📍 Получать рекомендации куда отправлять товары\n\n"
             f"⚠️ <b>Для начала работы необходимо добавить WB API токен:</b>\n\n"
-            f"1️⃣ Перейдите в ЛК Wildberries:\n"
+            f"1️⃣ Перейдите в <a href='https://seller.wildberries.ru/supplier-settings/access-to-api'>ЛК Wildberries</a>:\n"
             f"   Настройки → Доступ к API\n\n"
             f"2️⃣ Создайте токен с правами:\n"
             f"   • <b>Маркетплейс</b>\n"
             f"   • <b>Поставки</b>\n"
             f"   • <b>Контент</b>\n\n"
             f"3️⃣ Уровень доступа: <b>Чтение и запись</b>\n\n"
-            f"4️⃣ Отправьте токен боту командой:\n"
-            f"   /token\n\n"
-            f"После добавления токена вам станет доступен Mini App для перераспределения остатков.\n\n"
+            f"4️⃣ Скопируйте токен и <b>просто отправьте его мне</b>\n\n"
+            f"Я автоматически проверю токен и подключу Mini App 🚀\n\n"
             f"/help - справка по всем командам",
-            parse_mode=ParseMode.HTML
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True
         )
 
 
@@ -199,6 +201,103 @@ async def cmd_stats(message: Message):
         f"🔔 Изменений: {monitor_stats.get('changes_detected', 0)}\n"
         f"📦 Кэш коэфф.: {monitor_stats.get('cached_coefficients', 0)}",
         parse_mode=ParseMode.HTML
+    )
+
+
+async def handle_text_message(message: Message):
+    """
+    Обработчик обычных текстовых сообщений.
+    Если у пользователя нет токена - пытается распознать WB токен автоматически.
+    """
+    user_id = message.from_user.id
+    text = message.text.strip()
+
+    # Проверяем, есть ли у пользователя токен
+    tokens = db.get_wb_tokens(user_id)
+
+    # Если токен уже есть - игнорируем (пусть другие handlers обрабатывают)
+    if len(tokens) > 0:
+        return
+
+    # Если нет токена и текст похож на WB токен (длинный base64)
+    if len(text) < 50:
+        return  # Слишком короткий для токена
+
+    # Удаляем сообщение с токеном из чата (безопасность)
+    try:
+        await message.delete()
+    except Exception as e:
+        logger.error(f"Failed to delete token message: {e}")
+        await message.answer(
+            "⚠️ <b>ВНИМАНИЕ!</b>\n\n"
+            "Не удалось удалить ваше сообщение с токеном.\n"
+            "Пожалуйста, удалите его вручную для безопасности!",
+            parse_mode=ParseMode.HTML
+        )
+
+    # Проверяем токен
+    status_msg = await message.answer("🔄 Проверяю токен...")
+
+    try:
+        async with WBApiClient(text) as client:
+            is_valid = await client.check_token()
+    except Exception as e:
+        logger.error(f"Token validation failed: {e}")
+        is_valid = False
+
+    if not is_valid:
+        await status_msg.edit_text(
+            "❌ <b>Токен невалиден</b>\n\n"
+            "Убедитесь, что:\n"
+            "• Токен скопирован полностью\n"
+            "• Не истёк срок действия\n"
+            "• Есть права: <b>Маркетплейс, Поставки, Контент</b>\n"
+            "• Уровень доступа: <b>Чтение и запись</b>\n\n"
+            "Попробуйте создать новый токен в ЛК WB и отправьте снова.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    # Токен валидный - добавляем
+    encrypted = encrypt_token(text)
+    name = "Основной"
+    token_id = db.add_wb_token(user_id, encrypted, name)
+
+    if not token_id:
+        await status_msg.edit_text(
+            "❌ Этот токен уже добавлен.\n\n"
+            "Используйте /token для управления токенами."
+        )
+        return
+
+    # Создаём поставщика автоматически
+    supplier_id = db.add_supplier(
+        user_id=user_id,
+        name=name,
+        token_id=token_id
+    )
+
+    # Показываем кнопку Mini App
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="📦 Открыть Перераспределение",
+                web_app=WebAppInfo(url=f"{Config.WEBAPP_URL}/webapp/index.html")
+            )
+        ]
+    ])
+
+    await status_msg.edit_text(
+        f"✅ <b>Токен успешно добавлен!</b>\n\n"
+        f"🎉 Mini App готов к работе!\n\n"
+        f"Теперь вы можете:\n"
+        f"📦 Открыть Mini App (кнопка ниже)\n"
+        f"📊 /monitor - мониторинг коэффициентов\n"
+        f"📈 /coefficients - текущие коэффициенты\n"
+        f"🎯 /book - забронировать слот\n\n"
+        f"<i>Нажмите кнопку ниже для открытия перераспределения 👇</i>",
+        parse_mode=ParseMode.HTML,
+        reply_markup=keyboard
     )
 
 
@@ -260,6 +359,9 @@ async def main():
     dp.include_router(monitoring_router)
     dp.include_router(booking_router)
     dp.include_router(redistribution_router)
+
+    # Обработчик обычных текстовых сообщений (регистрируем последним как catch-all)
+    dp.message.register(handle_text_message)
 
     logger.info("Handlers registered")
 
