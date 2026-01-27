@@ -139,18 +139,23 @@ async def callback_add_token(callback: CallbackQuery, state: FSMContext):
 @router.message(TokenStates.waiting_for_token)
 async def process_token(message: Message, state: FSMContext):
     """Обработка введённого токена"""
+    logger.info(f"=== PROCESS_TOKEN CALLED === User: {message.from_user.id}")
+
     token = message.text.strip()
+    logger.info(f"Token length: {len(token)}")
 
     # Удаляем сообщение с токеном из чата (безопасность)
     deletion_failed = False
     try:
         await message.delete()
+        logger.info("Token message deleted successfully")
     except Exception as e:
         deletion_failed = True
         logger.error(f"Failed to delete token message: {e}")
 
     # КРИТИЧНО: Если не удалось удалить сообщение - предупредить пользователя
     if deletion_failed:
+        logger.warning("Token deletion failed - asking user to delete manually")
         warning_msg = await message.answer(
             "⚠️ <b>ВНИМАНИЕ!</b>\n\n"
             "Не удалось удалить ваше сообщение с токеном из чата.\n"
@@ -166,6 +171,7 @@ async def process_token(message: Message, state: FSMContext):
 
     # Проверяем формат
     if len(token) < 50:
+        logger.warning(f"Token too short: {len(token)} chars")
         await message.answer(
             "❌ Токен слишком короткий. Проверьте правильность и попробуйте снова."
         )
@@ -173,9 +179,10 @@ async def process_token(message: Message, state: FSMContext):
 
     # Проверяем валидность токена
     # ВРЕМЕННО ОТКЛЮЧЕНО для тестирования - проверка WB API не работает
-    logger.warning("⚠️ Token validation is DISABLED for testing")
+    logger.warning("🚨🚨🚨 Token validation is DISABLED for testing 🚨🚨🚨")
 
     status_msg = await message.answer("⚠️ Добавляю токен без проверки (тестовый режим)...")
+    logger.info("Status message sent to user")
 
     # ЗАКОММЕНТИРОВАНО: Проверка токена
     # try:
@@ -198,19 +205,25 @@ async def process_token(message: Message, state: FSMContext):
 
     # Сохраняем токен во временное хранилище
     await state.update_data(token=token)
+    logger.info("Token saved to FSM state")
 
     await status_msg.edit_text(
         "✅ Токен принят (без проверки)!\n\n"
         "Введите название для этого токена (например: \"Основной\" или \"Магазин 1\"):\n\n"
         "Или отправьте /skip для имени по умолчанию."
     )
+    logger.info("Waiting for supplier name...")
     await state.set_state(TokenStates.waiting_for_name)
 
 
 @router.message(TokenStates.waiting_for_name)
 async def process_token_name(message: Message, state: FSMContext):
     """Обработка названия токена"""
+    logger.info(f"=== PROCESS_TOKEN_NAME CALLED === User: {message.from_user.id}")
+    logger.info(f"Received name: {message.text}")
+
     name = message.text.strip()
+    logger.info(f"Stripped name: '{name}'")
 
     if name.lower() == "/skip":
         name = "Основной"
