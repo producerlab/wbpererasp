@@ -11,14 +11,23 @@
 - Quota Monitor (мониторинг квот) - опционально
 """
 
+# ВАЖНО: Первый вывод для диагностики Railway
+print("=" * 50, flush=True)
+print("🚀 run.py STARTED", flush=True)
+print("=" * 50, flush=True)
+
 import asyncio
 import logging
 import sys
 import os
-from threading import Thread
+print("📦 Core imports OK", flush=True)
 
+from threading import Thread
 import uvicorn
+print("📦 uvicorn OK", flush=True)
+
 from config import Config
+print("📦 Config imported OK", flush=True)
 
 # Настройка логирования
 logging.basicConfig(

@@ -4,7 +4,7 @@
     "builder": "NIXPACKS"
   },
   "deploy": {
-    "startCommand": "sleep 30; python3 run.py",
+    "startCommand": "PYTHONUNBUFFERED=1 python3 -u run.py",
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10
   }
