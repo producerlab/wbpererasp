@@ -40,7 +40,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Глобальные объекты
-db: Optional[Database] = None
+db = None  # Database instance (SQLite or PostgreSQL)
 bot: Optional[Bot] = None
 monitor: Optional[CoefficientMonitor] = None
 notification_service: Optional[NotificationService] = None
