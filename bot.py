@@ -114,7 +114,7 @@ async def cmd_start(message: Message, state: FSMContext):
                 f"🔐 <b>Авторизация через SMS</b>\n\n"
                 f"📱 Отправьте номер телефона в формате:\n"
                 f"<code>+79991234567</code> или <code>89991234567</code>\n\n"
-                f"⚠️ На этот номер придет SMS код от Wildberries.",
+                f"⚠️ SMS код придёт от <b>ВАЛБОРИС</b>",
                 parse_mode=ParseMode.HTML
             )
             logger.info(f"[START] User {user_id} - sent welcome message, waiting for phone")
@@ -185,7 +185,7 @@ async def callback_reauth(callback: CallbackQuery, state: FSMContext):
         "🔄 Сессия сброшена.\n\n"
         "📱 Отправьте номер телефона в формате:\n"
         "<code>+79991234567</code> или <code>89991234567</code>\n\n"
-        "⚠️ На этот номер придет SMS код от Wildberries.",
+        "⚠️ SMS код придёт от <b>ВАЛБОРИС</b>",
         parse_mode=ParseMode.HTML
     )
 
