@@ -1,0 +1,32 @@
+# WB Redistribution Bot - Dependencies
+
+# Telegram Bot
+aiogram==3.4.1
+
+# HTTP Client
+aiohttp==3.9.1
+httpx==0.26.0
+
+# Environment
+python-dotenv==1.0.0
+
+# Encryption for API tokens
+cryptography==41.0.7
+
+# Retry logic
+tenacity==8.2.3
+
+# Redis (optional, for caching)
+redis==5.0.1
+aioredis==2.0.1
+
+# Scheduler (optional, for background tasks)
+apscheduler==3.10.4
+
+# Data validation
+pydantic==2.5.3
+
+# FastAPI for Mini App backend
+fastapi==0.109.0
+uvicorn==0.27.0
+python-multipart==0.0.6

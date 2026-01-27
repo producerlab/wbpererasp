@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Перераспределение остатков WB</title>
+    <link rel="stylesheet" href="/webapp/css/style.css">
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+    <div id="app">
+        <!-- Заголовок -->
+        <header class="header">
+            <h1>Супербот Автобронь перемещение</h1>
+        </header>
+
+        <!-- Табы -->
+        <div class="tabs">
+            <button class="tab active" data-tab="current">
+                <span class="tab-badge" id="current-count">0</span>
+                Текущие
+            </button>
+            <button class="tab" data-tab="archive">
+                <span class="tab-badge" id="archive-count">0</span>
+                Архив
+            </button>
+        </div>
+
+        <!-- Кнопка создания заявки -->
+        <div class="create-btn-wrapper">
+            <button class="btn-create" id="btn-create">
+                + Создать запрос
+            </button>
+        </div>
+
+        <!-- Список заявок (текущие) -->
+        <div class="requests-list" id="current-list">
+            <div class="empty-state" id="current-empty">
+                Нет текущих заявок
+            </div>
+        </div>
+
+        <!-- Список заявок (архив) -->
+        <div class="requests-list hidden" id="archive-list">
+            <div class="empty-state" id="archive-empty">
+                Нет архивных заявок
+            </div>
+        </div>
+
+        <!-- Форма создания заявки -->
+        <div class="modal hidden" id="modal-create">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>Новый запрос на перемещение</h2>
+                    <button class="btn-close" id="btn-close-modal">&times;</button>
+                </div>
+
+                <form id="form-create">
+                    <!-- Поставщик -->
+                    <div class="form-group">
+                        <label>Выберите поставщика...</label>
+                        <select id="supplier" required>
+                            <option value="">Загрузка...</option>
+                        </select>
+                    </div>
+
+                    <!-- Артикул WB -->
+                    <div class="form-group">
+                        <label>Артикул WB (от 3 цифр)</label>
+                        <input
+                            type="text"
+                            id="nm-id"
+                            placeholder="Введите артикул..."
+                            required
+                            minlength="3"
+                        >
+                    </div>
+
+                    <!-- Название товара (автоподгрузка) -->
+                    <div class="form-group hidden" id="product-info">
+                        <div class="product-name" id="product-name"></div>
+                    </div>
+
+                    <!-- Откуда забрать -->
+                    <div class="form-group hidden" id="source-group">
+                        <label>Откуда забрать...</label>
+                        <select id="source-warehouse" required>
+                            <option value="">Выберите склад</option>
+                        </select>
+                    </div>
+
+                    <!-- Количество -->
+                    <div class="form-group hidden" id="quantity-group">
+                        <label>Количество (не более <span id="max-quantity">0</span>)</label>
+                        <input
+                            type="number"
+                            id="quantity"
+                            placeholder="Введите количество"
+                            min="1"
+                            required
+                        >
+                    </div>
+
+                    <!-- Куда отправить -->
+                    <div class="form-group hidden" id="target-group">
+                        <label>Куда отправить...</label>
+                        <select id="target-warehouse" required>
+                            <option value="">Выберите склад</option>
+                        </select>
+                    </div>
+
+                    <!-- Кнопка сохранения -->
+                    <button type="submit" class="btn-submit" id="btn-submit">
+                        Сохранить
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Loader -->
+        <div class="loader hidden" id="loader">
+            <div class="spinner"></div>
+        </div>
+    </div>
+
+    <script src="/webapp/js/app.js"></script>
+</body>
+</html>
