@@ -22,9 +22,11 @@ from aiogram.client.default import DefaultBotProperties
 from config import Config
 from db_factory import get_database
 from handlers import token_router, supplier_router, monitoring_router, booking_router, redistribution_router
+from handlers.token_management import TokenStates
 from services.coefficient_monitor import CoefficientMonitor, MonitoringEvent
 from services.notification_service import NotificationService
 from services.slot_booking import SlotBookingService
+from wb_api.client import WBApiClient
 from aiogram.fsm.context import FSMContext
 
 # Настройка логирования
@@ -202,7 +204,7 @@ async def cmd_stats(message: Message):
 async def handle_text_message(message: Message, state: FSMContext):
     """
     Обработчик обычных текстовых сообщений.
-    Направляет пользователей без токена на команду /token.
+    Автоматически распознаёт и проверяет WB API токен.
     """
     user_id = message.from_user.id
     text = message.text.strip()
@@ -218,12 +220,52 @@ async def handle_text_message(message: Message, state: FSMContext):
     if len(text) < 50:
         return  # Слишком короткий для токена
 
-    # Направляем на команду /token для правильного добавления с названием компании
-    await message.answer(
-        "📝 Для добавления токена используйте команду /token\n\n"
-        "Там вы сможете указать название компании/ИП.",
+    # Удаляем сообщение с токеном из чата (безопасность)
+    try:
+        await message.delete()
+    except Exception as e:
+        logger.error(f"Failed to delete token message: {e}")
+        await message.answer(
+            "⚠️ <b>ВНИМАНИЕ!</b>\n\n"
+            "Не удалось удалить ваше сообщение с токеном.\n"
+            "Пожалуйста, удалите его вручную для безопасности!",
+            parse_mode=ParseMode.HTML
+        )
+
+    # Проверяем токен
+    status_msg = await message.answer("🔄 Проверяю токен...")
+
+    try:
+        async with WBApiClient(text) as client:
+            is_valid = await client.check_token()
+    except Exception as e:
+        logger.error(f"Token validation failed: {e}")
+        is_valid = False
+
+    if not is_valid:
+        await status_msg.edit_text(
+            "❌ <b>Токен невалиден</b>\n\n"
+            "Убедитесь, что:\n"
+            "• Токен скопирован полностью\n"
+            "• Не истёк срок действия\n"
+            "• Есть права: <b>Маркетплейс, Поставки, Контент</b>\n"
+            "• Уровень доступа: <b>Чтение и запись</b>\n\n"
+            "Попробуйте создать новый токен в ЛК WB и отправьте снова.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    # Сохраняем токен во временное хранилище
+    await state.update_data(token=text)
+
+    await status_msg.edit_text(
+        "✅ Токен валиден!\n\n"
+        "Введите название компании/ИП для этого токена:\n"
+        "(например: <b>ИП Хоснуллин</b> или <b>ООО Мегаторг</b>)\n\n"
+        "Или отправьте /skip для имени по умолчанию.",
         parse_mode=ParseMode.HTML
     )
+    await state.set_state(TokenStates.waiting_for_name)
 
 
 async def start_monitoring():
