@@ -13,11 +13,12 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 
 from database import Database
 from wb_api.client import WBApiClient
 from utils.encryption import encrypt_token
+from config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -232,15 +233,34 @@ async def process_token_name(message: Message, state: FSMContext):
     token_id = db.add_wb_token(user_id, encrypted, name)
 
     if token_id:
+        # Добавляем поставщика автоматически
+        supplier_id = db.add_supplier(
+            user_id=user_id,
+            name=name,
+            token_id=token_id
+        )
+
+        # Показываем кнопку Mini App после успешного добавления токена
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📦 Открыть Перераспределение",
+                    web_app=WebAppInfo(url=f"{Config.WEBAPP_URL}/webapp/index.html")
+                )
+            ]
+        ])
+
         await message.answer(
             f"✅ <b>Токен успешно добавлен!</b>\n\n"
             f"📛 Название: {name}\n"
             f"🆔 ID: {token_id}\n\n"
             f"Теперь вы можете:\n"
-            f"• /monitor - настроить мониторинг коэффициентов\n"
-            f"• /coefficients - посмотреть текущие коэффициенты\n"
-            f"• /book - забронировать слот на склад",
-            parse_mode='HTML'
+            f"📦 Открыть Mini App для перераспределения остатков (кнопка ниже)\n"
+            f"📊 /monitor - настроить мониторинг коэффициентов\n"
+            f"📈 /coefficients - посмотреть текущие коэффициенты\n"
+            f"🎯 /book - забронировать слот на склад",
+            parse_mode='HTML',
+            reply_markup=keyboard
         )
     else:
         await message.answer(
