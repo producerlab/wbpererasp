@@ -206,6 +206,20 @@ async def main():
     """Главная функция запуска бота"""
     global db, bot
 
+    # 🚨 RAILWAY DEPLOYMENT CHECK
+    try:
+        import os
+        test_file = os.path.join(os.path.dirname(__file__), 'RAILWAY_TEST.txt')
+        if os.path.exists(test_file):
+            with open(test_file, 'r') as f:
+                content = f.read()
+                logger.warning("=" * 60)
+                logger.warning("🚨 RAILWAY DEPLOYMENT CHECK:")
+                logger.warning(content)
+                logger.warning("=" * 60)
+    except Exception as e:
+        logger.error(f"Failed to read RAILWAY_TEST.txt: {e}")
+
     # Валидация конфигурации
     Config.validate()
     logger.info("Configuration validated")

@@ -1,0 +1,9 @@
+🚨 RAILWAY DEPLOYMENT TEST 🚨
+
+This file was created to verify Railway is deploying new code.
+
+Timestamp: 2026-01-27 18:30:00
+Commit: Testing Railway deployment
+
+If you see this file in Railway logs, the deployment is working.
+If not, Railway is using cached/old code.
