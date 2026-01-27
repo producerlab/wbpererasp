@@ -62,8 +62,9 @@ class DatabasePostgres:
 
                 if not exists:
                     logger.info("Initializing PostgreSQL schema...")
-                    # Читаем и выполняем init_db.sql
-                    with open('init_db.sql', 'r', encoding='utf-8') as f:
+                    # Читаем и выполняем init_db.sql (используем абсолютный путь)
+                    sql_file = os.path.join(os.path.dirname(__file__), 'init_db.sql')
+                    with open(sql_file, 'r', encoding='utf-8') as f:
                         sql_script = f.read()
                     cursor.execute(sql_script)
                     logger.info("Schema initialized")
