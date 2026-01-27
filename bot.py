@@ -43,71 +43,95 @@ bot: Optional[Bot] = None
 async def cmd_start(message: Message, state: FSMContext):
     """Команда /start - начало работы с ботом через SMS авторизацию"""
     user_id = message.from_user.id
+    logger.info(f"[START] User {user_id} pressed /start")
 
-    # Регистрируем пользователя
-    db.add_user(
-        telegram_id=user_id,
-        username=message.from_user.username,
-        first_name=message.from_user.first_name
-    )
+    # Сначала очищаем любые предыдущие состояния FSM
+    await state.clear()
+    logger.info(f"[START] User {user_id} FSM state cleared")
 
-    # Проверяем, есть ли активная browser session
-    session = db.get_browser_session(user_id)
+    try:
+        # Регистрируем пользователя
+        db.add_user(
+            telegram_id=user_id,
+            username=message.from_user.username,
+            first_name=message.from_user.first_name
+        )
+        logger.info(f"[START] User {user_id} registered in DB")
 
-    if session:
-        # Если сессия есть - показываем кнопку Mini App
-        webapp_url = Config.WEBAPP_URL
-        if webapp_url and webapp_url.startswith("https://"):
-            full_url = f"{webapp_url.rstrip('/')}/webapp/index.html"
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(
-                    text="📦 Открыть Перераспределение",
-                    web_app=WebAppInfo(url=full_url)
-                )],
-                [InlineKeyboardButton(
-                    text="🔄 Войти заново",
-                    callback_data="reauth"
-                )]
-            ])
+        # Проверяем, есть ли активная browser session
+        session = db.get_browser_session(user_id)
+        logger.info(f"[START] User {user_id} session: {bool(session)}")
 
-            supplier_info = session.get('supplier_name', 'Ваш магазин')
-            phone = session.get('phone', 'не указан')
+        if session:
+            # Если сессия есть - показываем кнопку Mini App
+            webapp_url = Config.WEBAPP_URL
+            logger.info(f"[START] WEBAPP_URL: {webapp_url}")
+
+            if webapp_url and webapp_url.startswith("https://"):
+                full_url = f"{webapp_url.rstrip('/')}/webapp/index.html"
+                keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(
+                        text="📦 Открыть Перераспределение",
+                        web_app=WebAppInfo(url=full_url)
+                    )],
+                    [InlineKeyboardButton(
+                        text="🔄 Войти заново",
+                        callback_data="reauth"
+                    )]
+                ])
+
+                supplier_info = session.get('supplier_name', 'Ваш магазин')
+                phone = session.get('phone', 'не указан')
+
+                await message.answer(
+                    f"👋 <b>Добро пожаловать в WB Redistribution Bot!</b>\n\n"
+                    f"✅ Вы уже авторизованы!\n\n"
+                    f"📛 Магазин: <b>{supplier_info}</b>\n"
+                    f"📱 Телефон: <code>{phone}</code>\n\n"
+                    f"Нажмите кнопку ниже, чтобы открыть панель перераспределения:\n\n"
+                    f"<b>Команды:</b>\n"
+                    f"/balance - проверить баланс\n"
+                    f"/help - справка",
+                    reply_markup=keyboard,
+                    parse_mode=ParseMode.HTML
+                )
+                logger.info(f"[START] User {user_id} - sent authorized message with Mini App")
+            else:
+                await message.answer(
+                    f"✅ Вы авторизованы, но WEBAPP_URL не настроен.\n\n"
+                    f"Магазин: {session.get('supplier_name', 'N/A')}\n"
+                    f"Телефон: {session.get('phone', 'N/A')}"
+                )
+                logger.info(f"[START] User {user_id} - sent authorized message (no HTTPS)")
+        else:
+            # Если сессии нет - запускаем SMS авторизацию
+            from handlers.browser_auth import AuthStates
 
             await message.answer(
                 f"👋 <b>Добро пожаловать в WB Redistribution Bot!</b>\n\n"
-                f"✅ Вы уже авторизованы!\n\n"
-                f"📛 Магазин: <b>{supplier_info}</b>\n"
-                f"📱 Телефон: <code>{phone}</code>\n\n"
-                f"Нажмите кнопку ниже, чтобы открыть панель перераспределения:\n\n"
-                f"<b>Команды:</b>\n"
-                f"/balance - проверить баланс\n"
-                f"/help - справка",
-                reply_markup=keyboard,
+                f"📦 <b>Автоматическое перераспределение остатков между складами Wildberries</b>\n\n"
+                f"Для работы бота нужен доступ к вашему личному кабинету WB.\n\n"
+                f"🔐 <b>Авторизация через SMS</b>\n\n"
+                f"📱 Отправьте номер телефона в формате:\n"
+                f"<code>+79991234567</code> или <code>89991234567</code>\n\n"
+                f"⚠️ На этот номер придет SMS код от Wildberries.",
                 parse_mode=ParseMode.HTML
             )
-        else:
+            logger.info(f"[START] User {user_id} - sent welcome message, waiting for phone")
+
+            # Устанавливаем состояние ожидания телефона
+            await state.set_state(AuthStates.waiting_phone)
+
+    except Exception as e:
+        logger.error(f"[START] Error for user {user_id}: {e}", exc_info=True)
+        try:
             await message.answer(
-                f"✅ Вы авторизованы, но WEBAPP_URL не настроен.\n\n"
-                f"Магазин: {session.get('supplier_name', 'N/A')}\n"
-                f"Телефон: {session.get('phone', 'N/A')}"
+                f"⚠️ Произошла ошибка при запуске.\n\n"
+                f"Попробуйте позже или обратитесь к администратору.\n"
+                f"Код: {type(e).__name__}"
             )
-    else:
-        # Если сессии нет - запускаем SMS авторизацию
-        from handlers.browser_auth import AuthStates
-
-        await message.answer(
-            f"👋 <b>Добро пожаловать в WB Redistribution Bot!</b>\n\n"
-            f"📦 <b>Автоматическое перераспределение остатков между складами Wildberries</b>\n\n"
-            f"Для работы бота нужен доступ к вашему личному кабинету WB.\n\n"
-            f"🔐 <b>Авторизация через SMS</b>\n\n"
-            f"📱 Отправьте номер телефона в формате:\n"
-            f"<code>+79991234567</code> или <code>89991234567</code>\n\n"
-            f"⚠️ На этот номер придет SMS код от Wildberries.",
-            parse_mode=ParseMode.HTML
-        )
-
-        # Устанавливаем состояние ожидания телефона
-        await state.set_state(AuthStates.waiting_phone)
+        except Exception as send_error:
+            logger.error(f"[START] Failed to send error message: {send_error}")
 
 
 async def cmd_help(message: Message):
