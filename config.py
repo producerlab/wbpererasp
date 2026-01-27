@@ -52,6 +52,13 @@ class Config:
     # ========== REDIS (опционально) ==========
     REDIS_URL: str = os.getenv('REDIS_URL', '')
 
+    # ========== YOOKASSA ==========
+    YOOKASSA_SHOP_ID: str = os.getenv('YOOKASSA_SHOP_ID', '')
+    YOOKASSA_SECRET_KEY: str = os.getenv('YOOKASSA_SECRET_KEY', '')
+
+    # ========== PRICING ==========
+    REDISTRIBUTION_PRICE: float = float(os.getenv('REDISTRIBUTION_PRICE', '50'))  # Цена за перемещение
+
 
     @classmethod
     def validate(cls) -> None:

@@ -124,6 +124,49 @@ class Database:
                 )
             ''')
 
+            # Browser sessions (для авторизации через SMS)
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS browser_sessions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    phone TEXT NOT NULL,
+                    cookies_encrypted TEXT,
+                    supplier_name TEXT,
+                    status TEXT DEFAULT 'active',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    last_used_at TIMESTAMP,
+                    expires_at TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(telegram_id)
+                )
+            ''')
+
+            # Баланс пользователей (для монетизации)
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS user_balance (
+                    user_id INTEGER PRIMARY KEY,
+                    balance REAL DEFAULT 0,
+                    total_spent REAL DEFAULT 0,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(telegram_id)
+                )
+            ''')
+
+            # История платежей
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS payments (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    amount REAL NOT NULL,
+                    payment_type TEXT NOT NULL,
+                    payment_id TEXT,
+                    status TEXT DEFAULT 'pending',
+                    description TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    completed_at TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(telegram_id)
+                )
+            ''')
+
             # Индексы для быстрого поиска
             cursor.execute('''
                 CREATE INDEX IF NOT EXISTS idx_tokens_user
@@ -136,6 +179,14 @@ class Database:
             cursor.execute('''
                 CREATE INDEX IF NOT EXISTS idx_redistribution_user
                 ON redistribution_requests(user_id, status)
+            ''')
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_browser_sessions_user
+                ON browser_sessions(user_id, status)
+            ''')
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_payments_user
+                ON payments(user_id, status)
             ''')
 
             logger.info("Database initialized successfully")
@@ -624,3 +675,291 @@ class Database:
             cursor = conn.cursor()
             cursor.execute('DELETE FROM redistribution_requests WHERE id = ?', (request_id,))
             return cursor.rowcount > 0
+
+    # ==================== USER BALANCE ====================
+
+    def get_user_balance(self, user_id: int) -> float:
+        """Получает баланс пользователя"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT balance FROM user_balance WHERE user_id = ?', (user_id,))
+            row = cursor.fetchone()
+            return row[0] if row else 0.0
+
+    def update_user_balance(self, user_id: int, amount: float, operation: str = 'add') -> float:
+        """
+        Обновляет баланс пользователя.
+
+        Args:
+            user_id: ID пользователя
+            amount: Сумма (положительная)
+            operation: 'add' для пополнения, 'subtract' для списания
+
+        Returns:
+            Новый баланс
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Создаём запись если её нет
+            cursor.execute('''
+                INSERT INTO user_balance (user_id, balance)
+                VALUES (?, 0)
+                ON CONFLICT(user_id) DO NOTHING
+            ''', (user_id,))
+
+            if operation == 'add':
+                cursor.execute('''
+                    UPDATE user_balance
+                    SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE user_id = ?
+                ''', (amount, user_id))
+            elif operation == 'subtract':
+                cursor.execute('''
+                    UPDATE user_balance
+                    SET balance = balance - ?, total_spent = total_spent + ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE user_id = ?
+                ''', (amount, amount, user_id))
+
+            cursor.execute('SELECT balance FROM user_balance WHERE user_id = ?', (user_id,))
+            return cursor.fetchone()[0]
+
+    def get_balance_info(self, user_id: int) -> Dict:
+        """Получает полную информацию о балансе"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM user_balance WHERE user_id = ?', (user_id,))
+            row = cursor.fetchone()
+            if row:
+                return dict(row)
+            return {'user_id': user_id, 'balance': 0, 'total_spent': 0}
+
+    # ==================== PAYMENTS ====================
+
+    def add_payment(
+        self,
+        user_id: int,
+        amount: float,
+        payment_type: str,
+        payment_id: str = None,
+        description: str = None
+    ) -> int:
+        """Добавляет запись о платеже"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO payments
+                (user_id, amount, payment_type, payment_id, description)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (user_id, amount, payment_type, payment_id, description))
+            return cursor.lastrowid
+
+    def get_payments(self, user_id: int, limit: int = 50) -> List[Dict]:
+        """Получает историю платежей пользователя"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT * FROM payments
+                WHERE user_id = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+            ''', (user_id, limit))
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_payment(self, payment_id: int) -> Optional[Dict]:
+        """Получает платёж по ID"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM payments WHERE id = ?', (payment_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_payment_by_external_id(self, external_payment_id: str) -> Optional[Dict]:
+        """Получает платёж по внешнему ID (от платёжной системы)"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM payments WHERE payment_id = ?', (external_payment_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def update_payment_status(
+        self,
+        payment_id: int,
+        status: str,
+        completed_at: datetime = None
+    ) -> bool:
+        """Обновляет статус платежа"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            if completed_at:
+                cursor.execute('''
+                    UPDATE payments
+                    SET status = ?, completed_at = ?
+                    WHERE id = ?
+                ''', (status, completed_at, payment_id))
+            else:
+                cursor.execute('''
+                    UPDATE payments SET status = ? WHERE id = ?
+                ''', (status, payment_id))
+            return cursor.rowcount > 0
+
+    # ==================== BROWSER SESSIONS ====================
+
+    def add_browser_session(
+        self,
+        user_id: int,
+        phone: str,
+        cookies_encrypted: str,
+        supplier_name: str = None,
+        expires_days: int = 30
+    ) -> int:
+        """
+        Добавляет или обновляет браузерную сессию пользователя.
+
+        Args:
+            user_id: Telegram ID пользователя
+            phone: Номер телефона
+            cookies_encrypted: Зашифрованные cookies
+            supplier_name: Название магазина
+            expires_days: Количество дней до истечения сессии
+
+        Returns:
+            ID созданной сессии
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Деактивируем старые сессии этого пользователя
+            cursor.execute('''
+                UPDATE browser_sessions
+                SET status = 'inactive'
+                WHERE user_id = ? AND status = 'active'
+            ''', (user_id,))
+
+            # Создаем новую сессию
+            expires_at = datetime.now() + timedelta(days=expires_days)
+            cursor.execute('''
+                INSERT INTO browser_sessions (
+                    user_id, phone, cookies_encrypted, supplier_name,
+                    status, last_used_at, expires_at
+                )
+                VALUES (?, ?, ?, ?, 'active', CURRENT_TIMESTAMP, ?)
+            ''', (user_id, phone, cookies_encrypted, supplier_name, expires_at))
+
+            return cursor.lastrowid
+
+    def get_browser_session(self, user_id: int) -> Optional[Dict]:
+        """
+        Получает активную браузерную сессию пользователя.
+
+        Returns:
+            Словарь с данными сессии или None
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT * FROM browser_sessions
+                WHERE user_id = ? AND status = 'active'
+                AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
+                ORDER BY created_at DESC
+                LIMIT 1
+            ''', (user_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_browser_sessions(self, user_id: int, active_only: bool = True) -> List[Dict]:
+        """Получает все сессии браузера пользователя"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            if active_only:
+                cursor.execute('''
+                    SELECT * FROM browser_sessions
+                    WHERE user_id = ? AND status = 'active'
+                    ORDER BY created_at DESC
+                ''', (user_id,))
+            else:
+                cursor.execute('''
+                    SELECT * FROM browser_sessions
+                    WHERE user_id = ?
+                    ORDER BY created_at DESC
+                ''', (user_id,))
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_browser_session_by_id(self, session_id: int) -> Optional[Dict]:
+        """Получает сессию по ID"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM browser_sessions WHERE id = ?', (session_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def update_browser_session_last_used(self, session_id: int) -> bool:
+        """Обновляет время последнего использования сессии"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE browser_sessions
+                SET last_used_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            ''', (session_id,))
+            return cursor.rowcount > 0
+
+    def update_browser_session_status(
+        self,
+        session_id: int,
+        status: str
+    ) -> bool:
+        """
+        Обновляет статус сессии.
+
+        Args:
+            session_id: ID сессии
+            status: Новый статус ('active', 'inactive', 'expired')
+
+        Returns:
+            True если обновлено успешно
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE browser_sessions
+                SET status = ?
+                WHERE id = ?
+            ''', (status, session_id))
+            return cursor.rowcount > 0
+
+    def invalidate_browser_session(self, user_id: int) -> bool:
+        """Деактивирует все сессии пользователя"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE browser_sessions
+                SET status = 'inactive'
+                WHERE user_id = ? AND status = 'active'
+            ''', (user_id,))
+            return cursor.rowcount > 0
+
+    def delete_browser_session(self, session_id: int) -> bool:
+        """Удаляет сессию"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM browser_sessions WHERE id = ?', (session_id,))
+            return cursor.rowcount > 0
+
+    def cleanup_expired_sessions(self) -> int:
+        """
+        Очищает истекшие сессии.
+
+        Returns:
+            Количество удаленных сессий
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE browser_sessions
+                SET status = 'expired'
+                WHERE status = 'active'
+                AND expires_at IS NOT NULL
+                AND expires_at < CURRENT_TIMESTAMP
+            ''')
+            return cursor.rowcount

@@ -36,3 +36,9 @@ psycopg2-binary==2.9.9
 
 # Process management (для kill_old_bots.py)
 psutil==5.9.6
+
+# Browser automation for WB LK
+playwright==1.40.0
+
+# Payment system
+yookassa==3.2.0

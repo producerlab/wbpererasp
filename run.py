@@ -1,13 +1,20 @@
 """
-Запуск Telegram бота + FastAPI сервера одновременно.
+Запуск Telegram бота + FastAPI сервера + Workers одновременно.
 
 Использование:
     python run.py
+
+Компоненты:
+- Telegram Bot (aiogram)
+- FastAPI Server (Mini App backend)
+- Task Workers (обработка перемещений)
+- Quota Monitor (мониторинг квот) - опционально
 """
 
 import asyncio
 import logging
 import sys
+import os
 from threading import Thread
 
 import uvicorn
@@ -42,6 +49,112 @@ async def run_telegram_bot():
 
     logger.info("Starting Telegram bot...")
     await bot_main()
+
+
+async def run_workers(num_workers: int = 3, bot=None):
+    """
+    Запускает пул воркеров для обработки задач.
+
+    Args:
+        num_workers: Количество воркеров
+        bot: Telegram bot instance для уведомлений
+    """
+    from workers.task_worker import get_worker_pool, shutdown_worker_pool
+
+    # Callback для отправки уведомлений через бота
+    async def notify_user(user_id: int, message: str):
+        if bot:
+            try:
+                await bot.send_message(user_id, message, parse_mode='HTML')
+            except Exception as e:
+                logger.error(f"Failed to notify user {user_id}: {e}")
+
+    try:
+        pool = await get_worker_pool(
+            num_workers=num_workers,
+            notify_callback=notify_user if bot else None
+        )
+        await pool.start()
+    except Exception as e:
+        logger.error(f"Worker pool error: {e}", exc_info=True)
+    finally:
+        await shutdown_worker_pool()
+
+
+async def run_quota_monitor(bot=None):
+    """
+    Запускает мониторинг квот на складах.
+
+    Args:
+        bot: Telegram bot instance для уведомлений
+    """
+    from browser.quota_monitor import get_quota_monitor, shutdown_quota_monitor
+
+    # Callback для уведомлений
+    async def notify_user(user_id: int, message: str):
+        if bot:
+            try:
+                await bot.send_message(user_id, message, parse_mode='HTML')
+            except Exception as e:
+                logger.error(f"Failed to notify user {user_id}: {e}")
+
+    try:
+        monitor = await get_quota_monitor(
+            check_interval=60,  # каждую минуту
+            notify_callback=notify_user if bot else None
+        )
+        await monitor.start()
+    except Exception as e:
+        logger.error(f"Quota monitor error: {e}", exc_info=True)
+    finally:
+        await shutdown_quota_monitor()
+
+
+async def run_all_services():
+    """Запускает все асинхронные сервисы параллельно"""
+    from aiogram import Bot
+    from aiogram.client.default import DefaultBotProperties
+    from aiogram.enums import ParseMode
+
+    # Создаём бота для уведомлений
+    bot = None
+    if Config.BOT_TOKEN:
+        bot = Bot(
+            token=Config.BOT_TOKEN,
+            default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+        )
+
+    # Проверяем, нужны ли воркеры (только если Redis настроен)
+    workers_enabled = bool(Config.REDIS_URL)
+
+    tasks = []
+
+    # Telegram бот (основной)
+    from bot import main as bot_main
+    tasks.append(asyncio.create_task(bot_main()))
+
+    # Workers (если Redis настроен)
+    if workers_enabled:
+        logger.info("Redis configured - starting workers...")
+        num_workers = int(os.getenv('NUM_WORKERS', '3'))
+        tasks.append(asyncio.create_task(run_workers(num_workers, bot)))
+
+        # Мониторинг квот (опционально)
+        if os.getenv('ENABLE_QUOTA_MONITOR', '').lower() == 'true':
+            logger.info("Starting quota monitor...")
+            tasks.append(asyncio.create_task(run_quota_monitor(bot)))
+    else:
+        logger.warning("Redis not configured - workers disabled")
+
+    try:
+        # Ждём завершения любой задачи (или все)
+        await asyncio.gather(*tasks)
+    except asyncio.CancelledError:
+        logger.info("Services cancelled")
+    finally:
+        # Cleanup
+        if bot:
+            await bot.session.close()
 
 
 def kill_old_bot_processes():
@@ -124,6 +237,9 @@ def main():
     except Exception as e:
         logger.error(f"Failed to kill old processes: {e}", exc_info=True)
 
+    workers_enabled = bool(Config.REDIS_URL)
+    quota_monitor_enabled = os.getenv('ENABLE_QUOTA_MONITOR', '').lower() == 'true'
+
     print("=" * 50)
     print("🚀 WB Redistribution Bot + API")
     print("=" * 50)
@@ -132,6 +248,9 @@ def main():
     print("🌐 FastAPI Server: http://localhost:8080")
     print("📚 API Docs: http://localhost:8080/docs")
     print("🖥  Mini App: http://localhost:8080/webapp")
+    print()
+    print(f"👷 Workers: {'Enabled' if workers_enabled else 'Disabled (no Redis)'}")
+    print(f"📊 Quota Monitor: {'Enabled' if quota_monitor_enabled else 'Disabled'}")
     print()
     print("⏳ Press Ctrl+C to stop")
     print("=" * 50)
@@ -145,9 +264,14 @@ def main():
     import time
     time.sleep(2)
 
-    # Запускаем бота в главном потоке
+    # Запускаем все асинхронные сервисы
     try:
-        asyncio.run(run_telegram_bot())
+        if workers_enabled:
+            # Режим с воркерами
+            asyncio.run(run_all_services())
+        else:
+            # Только бот (без воркеров)
+            asyncio.run(run_telegram_bot())
     except KeyboardInterrupt:
         logger.info("\n\n✅ Stopping services...")
         sys.exit(0)

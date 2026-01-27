@@ -255,16 +255,22 @@ class RedistributionService:
         coefficient: Optional[float]
     ):
         """Сохраняет перераспределение в БД"""
-        self.db.add_booking(
+        # Используем add_redistribution_request для сохранения
+        # supplier_id=0 так как browser auth не использует suppliers
+        request_id = self.db.add_redistribution_request(
             user_id=user_id,
-            warehouse_id=request.target_warehouse_id,
-            warehouse_name=request.target_warehouse_name,
-            coefficient=coefficient or 0,
-            slot_date=date.today(),
-            supply_id=supply_id,
-            booking_type='redistribution',
-            status='pending'
+            supplier_id=0,  # Browser auth не использует supplier_id
+            nm_id=int(request.sku) if request.sku.isdigit() else 0,
+            product_name=request.product_name or request.sku,
+            source_warehouse_id=request.source_warehouse_id,
+            source_warehouse_name=request.source_warehouse_name,
+            target_warehouse_id=request.target_warehouse_id,
+            target_warehouse_name=request.target_warehouse_name,
+            quantity=request.quantity
         )
+        # Обновляем supply_id
+        if supply_id:
+            self.db.update_redistribution_request(request_id, supply_id=supply_id)
 
     def get_warehouse_name(self, warehouse_id: int) -> str:
         """Получает название склада"""

@@ -1,1 +1,2 @@
-web: python3 run.py
+web: uvicorn api.main:app --host 0.0.0.0 --port $PORT
+worker: python3 bot.py
