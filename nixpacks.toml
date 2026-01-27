@@ -1,9 +1,9 @@
 [phases.setup]
-nixPkgs = ["python310", "python310Packages.pip"]
+nixPkgs = ["python310"]
 
 [phases.install]
 cmds = [
-    "pip install -r requirements.txt",
+    "pip install -r requirements.txt --break-system-packages",
     "playwright install --with-deps chromium"
 ]
 
