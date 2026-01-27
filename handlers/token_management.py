@@ -28,7 +28,7 @@ router = Router(name="token_management")
 class TokenStates(StatesGroup):
     """Состояния для добавления токена"""
     waiting_for_token = State()
-    waiting_for_name = State()
+    # waiting_for_name удалено - название получается автоматически из WB API
 
 
 def get_db():
@@ -538,34 +538,72 @@ async def cmd_continue(message: Message, state: FSMContext):
         await state.clear()
         return
 
-    # Проверяем валидность токена
-    status_msg = await message.answer("🔄 Проверяю токен...")
+    # Проверяем токен и получаем информацию о поставщике
+    status_msg = await message.answer("🔄 Проверяю токен и получаю информацию о магазине...")
+
+    supplier_name = "Мой магазин"  # Дефолт на случай ошибки
 
     try:
         async with WBApiClient(token) as client:
             is_valid = await client.check_token()
-    except Exception as e:
-        logger.error(f"Token validation failed: {e}")
-        is_valid = False
 
-    if not is_valid:
-        await status_msg.edit_text(
-            "❌ Токен невалиден или не имеет нужных прав.\n\n"
-            "Убедитесь, что токен:\n"
-            "• Скопирован полностью\n"
-            "• Не истёк срок действия\n"
-            "• Есть права на нужные разделы API\n\n"
-            "Попробуйте ещё раз через /token"
-        )
+            if not is_valid:
+                await status_msg.edit_text(
+                    "❌ Токен невалиден или не имеет нужных прав.\n\n"
+                    "Убедитесь, что токен:\n"
+                    "• Скопирован полностью\n"
+                    "• Не истёк срок действия\n"
+                    "• Есть права на нужные разделы API\n\n"
+                    "Попробуйте ещё раз через /token"
+                )
+                await state.clear()
+                return
+
+            # Получаем информацию о поставщике автоматически
+            supplier_info = await client.get_supplier_info()
+            if supplier_info and supplier_info.get("name"):
+                supplier_name = supplier_info["name"]
+    except Exception as e:
+        logger.error(f"Token validation/info fetch failed: {e}", exc_info=True)
+
+    # Сохраняем токен с автоматически полученным названием
+    user_id = message.from_user.id
+    db = get_db()
+    encrypted = encrypt_token(token)
+    token_id = db.add_wb_token(user_id, encrypted, supplier_name)
+
+    if not token_id:
+        await status_msg.edit_text("❌ Этот токен уже добавлен.")
         await state.clear()
         return
 
-    await status_msg.edit_text(
-        "✅ Токен валиден!\n\n"
-        "Введите название для этого токена (например: \"Основной\" или \"Магазин 1\"):\n\n"
-        "Или отправьте /skip для имени по умолчанию."
-    )
-    await state.set_state(TokenStates.waiting_for_name)
+    # Добавляем поставщика
+    supplier_id = db.add_supplier(user_id=user_id, name=supplier_name, token_id=token_id)
+
+    # Показываем результат с кнопкой Mini App
+    webapp_url = Config.WEBAPP_URL
+    if webapp_url and webapp_url.startswith("https://"):
+        full_url = f"{webapp_url.rstrip('/')}/webapp/index.html"
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📦 Открыть Перераспределение", web_app=WebAppInfo(url=full_url))]
+        ])
+        await status_msg.edit_text(
+            f"✅ <b>Токен успешно добавлен!</b>\n\n"
+            f"📛 Название: {supplier_name}\n"
+            f"🆔 ID: {token_id}\n\n"
+            f"Теперь вы можете открыть Mini App для перераспределения остатков:",
+            parse_mode='HTML',
+            reply_markup=keyboard
+        )
+    else:
+        await status_msg.edit_text(
+            f"✅ <b>Токен успешно добавлен!</b>\n\n"
+            f"📛 Название: {supplier_name}\n"
+            f"🆔 ID: {token_id}",
+            parse_mode='HTML'
+        )
+
+    await state.clear()
 
 
 @router.message(Command("cancel"))
