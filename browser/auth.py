@@ -29,6 +29,7 @@ class AuthStatus(Enum):
     """Статусы авторизации"""
     PENDING_PHONE = "pending_phone"      # Ожидание ввода номера
     PENDING_CODE = "pending_code"        # Ожидание SMS кода
+    CAPTCHA_REQUIRED = "captcha"         # Требуется ввод captcha
     SUCCESS = "success"                  # Успешная авторизация
     FAILED = "failed"                    # Ошибка авторизации
     BLOCKED = "blocked"                  # Аккаунт заблокирован
@@ -48,6 +49,7 @@ class AuthSession:
     cookies: Optional[list] = None       # Cookies после успешной авторизации
     error_message: Optional[str] = None  # Сообщение об ошибке
     supplier_name: Optional[str] = None  # Название поставщика из ЛК
+    captcha_screenshot: Optional[bytes] = None  # Скриншот captcha для отправки пользователю
 
 
 class WBAuthService:
@@ -186,6 +188,20 @@ class WBAuthService:
                     current_url = page.url
                     logger.info(f"Текущий URL после загрузки: {current_url}")
 
+                    # Имитируем человеческое поведение - случайные движения мыши
+                    logger.info("Имитация человеческого поведения...")
+                    await browser.random_mouse_movements(page, count=3)
+                    await browser.human_delay(500, 1000)
+
+                    # Проверяем наличие captcha сразу после загрузки
+                    if await self._detect_captcha(page):
+                        logger.warning("Captcha обнаружена сразу после загрузки!")
+                        screenshot = await browser.take_screenshot(page)
+                        session.status = AuthStatus.CAPTCHA_REQUIRED
+                        session.captcha_screenshot = screenshot
+                        session.error_message = "Wildberries показал капчу. Попробуйте позже или с другого IP."
+                        return session
+
                     # Ждём дополнительно если есть защита от ботов
                     await browser.human_delay(1000, 2000)
 
@@ -218,6 +234,16 @@ class WBAuthService:
             # Вводим номер телефона (без +7, т.к. на странице WB уже есть префикс +7)
             phone_digits = normalized_phone.replace('+7', '').replace('+', '')
             logger.info(f"Будем вводить: {phone_digits[:3]}*** ({len(phone_digits)} цифр)")
+
+            # Прокручиваем к полю ввода чтобы оно было видимо
+            try:
+                await phone_input.scroll_into_view_if_needed()
+                await browser.human_delay(300, 500)
+            except Exception as e:
+                logger.debug(f"scroll_into_view_if_needed не удался: {e}")
+
+            # Ещё немного случайных движений мыши перед вводом
+            await browser.random_mouse_movements(page, count=2)
 
             # Проверяем начальное значение поля
             initial_value = await phone_input.input_value()
@@ -433,8 +459,16 @@ class WBAuthService:
                     session.status = AuthStatus.PENDING_CODE
                     logger.info(f"SMS отправлено на {normalized_phone[:5]}*** (после дополнительного ожидания)")
                 else:
-                    session.status = AuthStatus.FAILED
-                    session.error_message = "Не появилось поле для ввода кода. Возможно, WB показал капчу или ошибку."
+                    # Проверяем, не появилась ли captcha после отправки формы
+                    if await self._detect_captcha(page):
+                        logger.warning("Captcha появилась после отправки формы!")
+                        screenshot = await browser.take_screenshot(page)
+                        session.status = AuthStatus.CAPTCHA_REQUIRED
+                        session.captcha_screenshot = screenshot
+                        session.error_message = "Wildberries требует ввод капчи. Попробуйте позже или с другого IP."
+                    else:
+                        session.status = AuthStatus.FAILED
+                        session.error_message = "Не появилось поле для ввода кода. Возможно, WB показал ошибку или форма не отправилась."
                     logger.error(session.error_message)
 
             return session
@@ -757,12 +791,134 @@ class WBAuthService:
     async def _check_error(self, page: Page) -> Optional[str]:
         """Проверить наличие ошибки на странице"""
         try:
+            # Сначала ищем конкретные сообщения об ошибках WB
+            body_text = await page.inner_text('body')
+
+            # Rate limit errors
+            rate_limit_patterns = [
+                'запрос кода возможен через',
+                'слишком много попыток',
+                'повторите попытку через',
+                'too many requests',
+                'try again in',
+            ]
+
+            for pattern in rate_limit_patterns:
+                if pattern.lower() in body_text.lower():
+                    # Ищем полное сообщение с таймером
+                    import re
+                    # Паттерн: "Запрос кода возможен через X минут Y секунд"
+                    match = re.search(r'(запрос кода возможен через.*?секунд)', body_text, re.IGNORECASE)
+                    if match:
+                        return f"Rate limit: {match.group(1)}"
+                    match = re.search(r'(повторите.*?через.*?\d+.*?(?:минут|секунд|час))', body_text, re.IGNORECASE)
+                    if match:
+                        return f"Rate limit: {match.group(1)}"
+                    return "Rate limit: слишком много попыток. Подождите несколько минут."
+
+            # Общие ошибки
+            error_patterns = [
+                'неверный номер',
+                'некорректный номер',
+                'номер не найден',
+                'ошибка авторизации',
+                'доступ заблокирован',
+                'аккаунт заблокирован',
+            ]
+
+            for pattern in error_patterns:
+                if pattern.lower() in body_text.lower():
+                    # Пытаемся найти контекст
+                    idx = body_text.lower().find(pattern.lower())
+                    if idx >= 0:
+                        # Берём 100 символов вокруг
+                        start = max(0, idx - 20)
+                        end = min(len(body_text), idx + 80)
+                        context = body_text[start:end].strip()
+                        # Убираем лишние пробелы и переносы
+                        context = ' '.join(context.split())
+                        return context
+
+            # Fallback: ищем элементы с классом error
             error_element = await page.query_selector(self.SELECTORS['error_message'])
             if error_element:
-                return await error_element.inner_text()
+                text = await error_element.inner_text()
+                # Фильтруем слишком короткие или бессмысленные сообщения
+                if text and len(text) > 5 and not text.startswith('+'):
+                    return text.strip()
+
+        except Exception as e:
+            logger.debug(f"Ошибка при проверке ошибок на странице: {e}")
+
+        return None
+
+    async def _detect_captcha(self, page: Page) -> bool:
+        """
+        Определить наличие captcha на странице.
+
+        Проверяет:
+        - reCAPTCHA
+        - hCaptcha
+        - Yandex SmartCaptcha
+        - Кастомные image captcha
+        """
+        captcha_selectors = [
+            # reCAPTCHA
+            'iframe[src*="recaptcha"]',
+            'iframe[title*="reCAPTCHA"]',
+            '[class*="recaptcha"]',
+            '#g-recaptcha',
+            '.g-recaptcha',
+
+            # hCaptcha
+            'iframe[src*="hcaptcha"]',
+            '[class*="hcaptcha"]',
+            '.h-captcha',
+
+            # Yandex SmartCaptcha
+            '[class*="smartcaptcha"]',
+            'iframe[src*="smartcaptcha"]',
+
+            # Cloudflare Turnstile
+            'iframe[src*="turnstile"]',
+            '[class*="turnstile"]',
+
+            # Generic captcha indicators
+            '[class*="captcha" i]',
+            '[id*="captcha" i]',
+            'img[src*="captcha" i]',
+            'input[name*="captcha" i]',
+        ]
+
+        for selector in captcha_selectors:
+            try:
+                element = await page.query_selector(selector)
+                if element and await element.is_visible():
+                    logger.warning(f"Обнаружена captcha: {selector}")
+                    return True
+            except Exception:
+                continue
+
+        # Проверяем текст страницы на упоминание captcha
+        try:
+            body_text = await page.inner_text('body')
+            captcha_keywords = [
+                'введите код с картинки',
+                'подтвердите, что вы не робот',
+                'проверка безопасности',
+                'я не робот',
+                'verify you are human',
+                'captcha',
+                'капча',
+            ]
+            for keyword in captcha_keywords:
+                if keyword.lower() in body_text.lower():
+                    logger.warning(f"Обнаружен текст captcha: '{keyword}'")
+                    return True
         except Exception:
             pass
-        return None
+
+        return False
 
     async def _check_logged_in(self, page: Page) -> bool:
         """Проверить успешную авторизацию"""

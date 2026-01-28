@@ -138,13 +138,53 @@ async def _process_phone_auth(message: Message, state: FSMContext, phone: str):
                 f"Напишите 6 цифр из SMS:",
                 parse_mode="HTML"
             )
+        elif session.status == AuthStatus.CAPTCHA_REQUIRED:
+            # WB показал captcha - отправляем скриншот пользователю
+            await state.clear()
+            await auth_service.close_session(user_id)
+
+            if session.captcha_screenshot:
+                photo = BufferedInputFile(session.captcha_screenshot, filename="captcha.png")
+                await message.answer_photo(
+                    photo,
+                    caption=(
+                        "⚠️ <b>Wildberries показал капчу</b>\n\n"
+                        "К сожалению, WB заблокировал автоматическую авторизацию.\n\n"
+                        "<b>Что делать:</b>\n"
+                        "• Подождите 10-15 минут и попробуйте снова\n"
+                        "• Попробуйте с другого номера\n"
+                        "• Если ошибка повторяется — свяжитесь с поддержкой\n\n"
+                        "Попробуйте снова: /auth"
+                    ),
+                    parse_mode="HTML"
+                )
+            else:
+                await message.answer(
+                    "⚠️ <b>Wildberries показал капчу</b>\n\n"
+                    "К сожалению, WB заблокировал автоматическую авторизацию.\n\n"
+                    "Подождите 10-15 минут и попробуйте снова: /auth",
+                    parse_mode="HTML"
+                )
         elif session.status == AuthStatus.FAILED:
             await state.clear()
             await auth_service.close_session(user_id)
-            await message.answer(
-                f"Ошибка авторизации: {session.error_message}\n\n"
-                f"Попробуйте ещё раз: /auth"
-            )
+
+            error_msg = session.error_message or "Неизвестная ошибка"
+
+            # Специальная обработка rate limit
+            if "rate limit" in error_msg.lower() or "запрос кода возможен" in error_msg.lower():
+                await message.answer(
+                    f"⏳ <b>Слишком много попыток</b>\n\n"
+                    f"{error_msg}\n\n"
+                    f"Wildberries временно заблокировал запросы кода для этого номера.\n"
+                    f"Подождите указанное время и попробуйте снова: /auth",
+                    parse_mode="HTML"
+                )
+            else:
+                await message.answer(
+                    f"❌ Ошибка авторизации: {error_msg}\n\n"
+                    f"Попробуйте ещё раз: /auth"
+                )
         else:
             await state.clear()
             await auth_service.close_session(user_id)
