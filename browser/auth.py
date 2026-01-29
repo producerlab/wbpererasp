@@ -764,25 +764,33 @@ class WBAuthService:
         try:
             # Сначала проверим текст страницы - есть ли сообщение об отправке кода
             body_text = await page.inner_text('body')
+            body_lower = body_text.lower()
 
-            # Проверяем, что мы НЕ на странице ввода телефона
-            still_on_phone_page = any(phrase in body_text.lower() for phrase in [
-                'введите номер телефона',
-                'enter phone number',
-                'введите номер, чтобы войти',
-            ])
-
-            if still_on_phone_page:
-                logger.warning("Мы всё ещё на странице ввода телефона - форма не отправилась!")
-                return None
-
-            has_code_text = any(phrase in body_text.lower() for phrase in [
+            # ВАЖНО: Сначала проверяем наличие текста про КОД!
+            # WB - это SPA, и оба текста (про телефон и про код) могут быть в DOM одновременно.
+            # Если есть текст про код - значит мы на странице кода, независимо от других текстов.
+            has_code_text = any(phrase in body_lower for phrase in [
                 'введите код', 'enter code', 'код из sms', 'код подтверждения',
-                'отправили код', 'отправлен код', 'мы отправили', 'sms с кодом'
+                'отправили код', 'отправлен код', 'мы отправили', 'sms с кодом',
+                'запросить заново через'  # Это тоже признак страницы кода
             ])
             logger.info(f"Текст страницы содержит упоминание кода: {has_code_text}")
 
-            if not has_code_text:
+            if has_code_text:
+                # Мы на странице ввода кода - продолжаем поиск полей
+                logger.info("Обнаружен текст про код - мы на странице ввода кода")
+            else:
+                # Нет текста про код - проверяем, может мы всё ещё на странице телефона
+                still_on_phone_page = any(phrase in body_lower for phrase in [
+                    'введите номер телефона',
+                    'enter phone number',
+                    'введите номер, чтобы войти',
+                ])
+
+                if still_on_phone_page:
+                    logger.warning("Мы всё ещё на странице ввода телефона - форма не отправилась!")
+                    return None
+
                 logger.warning("На странице нет текста о вводе кода - возможно форма не отправилась")
                 logger.info(f"Текст страницы: {body_text[:300]}")
                 return None
