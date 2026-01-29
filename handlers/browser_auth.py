@@ -299,9 +299,16 @@ async def _handle_code_result(message: Message, state: FSMContext, session, phon
             )
 
     elif session.status == AuthStatus.INVALID_CODE:
+        # WB сбрасывает код после неверной попытки - нужно запрашивать заново
+        await state.clear()
+        await auth_service.close_session(user_id)
         await message.answer(
-            "Неверный код. Попробуйте ещё раз.\n"
-            "Введите 6-значный код из SMS:"
+            "❌ <b>Неверный код</b>\n\n"
+            "Wildberries сбросил попытку ввода.\n"
+            "Старый код больше не действует.\n\n"
+            "⏳ Подождите ~1 минуту и запросите новый код:\n"
+            "/auth",
+            parse_mode="HTML"
         )
 
     elif session.status == AuthStatus.CODE_EXPIRED:
