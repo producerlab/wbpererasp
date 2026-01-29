@@ -252,14 +252,17 @@ async def process_code(message: Message, state: FSMContext):
             await state.clear()
             await auth_service.close_session(user_id)
 
-            supplier_info = f"\nМагазин: {session.supplier_name}" if session.supplier_name else ""
+            supplier_info = f"\n📛 Магазин: <b>{session.supplier_name}</b>" if session.supplier_name else ""
 
             await message.answer(
-                f"Авторизация успешна!{supplier_info}\n\n"
-                f"Номер: {phone}\n"
-                f"Сессия сохранена.\n\n"
-                f"Теперь вы можете использовать перемещение остатков.\n"
-                f"Используйте /redistribute для создания заявок."
+                f"✅ <b>Авторизация успешна!</b>{supplier_info}\n"
+                f"📱 Номер: <code>{phone}</code>\n\n"
+                f"🔐 Сессия сохранена в защищённом хранилище.\n\n"
+                f"<b>Что дальше?</b>\n"
+                f"• /redistribute — создать заявку на перемещение\n"
+                f"• /sessions — посмотреть активные сессии\n"
+                f"• /logout — выйти из аккаунта",
+                parse_mode="HTML"
             )
 
         elif session.status == AuthStatus.INVALID_CODE:

@@ -444,15 +444,25 @@ class WBAuthService:
                 logger.error(f"Ошибка авторизации: {error}")
                 return session
 
-            # Проверяем появление поля для кода
-            code_input = await self._find_code_input(page)
+            # Проверяем появление поля для кода (увеличенное ожидание)
+            # WB может долго обрабатывать запрос
+            code_input = None
+            max_attempts = 5
+            for attempt in range(max_attempts):
+                logger.info(f"Ищем поле кода, попытка {attempt + 1}/{max_attempts}...")
+                code_input = await self._find_code_input(page)
+                if code_input:
+                    break
+                # Ждём между попытками
+                await browser.human_delay(2000, 3000)
+
             if code_input:
                 session.status = AuthStatus.PENDING_CODE
                 logger.info(f"SMS отправлено на {normalized_phone[:5]}***")
             else:
-                # Ещё одна попытка - ждём дольше
-                logger.info("Поле кода не найдено, ждём ещё 3 секунды...")
-                await browser.human_delay(3000, 4000)
+                # Последняя попытка - ждём ещё дольше
+                logger.info("Поле кода не найдено после всех попыток, ждём ещё 5 секунд...")
+                await browser.human_delay(5000, 6000)
                 code_input = await self._find_code_input(page)
 
                 if code_input:
