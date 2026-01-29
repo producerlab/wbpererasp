@@ -11,39 +11,55 @@
     <div id="app">
         <!-- Заголовок -->
         <header class="header">
-            <h1>Супербот Автобронь перемещение</h1>
+            <h1>Перераспределение WB</h1>
         </header>
 
-        <!-- Табы -->
+        <!-- Табы (iOS-style segmented control) -->
         <div class="tabs">
-            <button class="tab active" data-tab="current">
-                <span class="tab-badge" id="current-count">0</span>
-                Текущие
-            </button>
-            <button class="tab" data-tab="archive">
-                <span class="tab-badge" id="archive-count">0</span>
-                Архив
-            </button>
+            <div class="tabs-container">
+                <button class="tab active" data-tab="current">
+                    Активные
+                    <span class="tab-badge" id="current-count">0</span>
+                </button>
+                <button class="tab" data-tab="archive">
+                    Архив
+                    <span class="tab-badge" id="archive-count">0</span>
+                </button>
+            </div>
         </div>
 
         <!-- Кнопка создания заявки -->
         <div class="create-btn-wrapper">
             <button class="btn-create" id="btn-create">
-                + Создать запрос
+                <svg viewBox="0 0 24 24" fill="none">
+                    <path d="M12 5v14M5 12h14"/>
+                </svg>
+                Создать запрос
             </button>
         </div>
 
         <!-- Список заявок (текущие) -->
         <div class="requests-list" id="current-list">
             <div class="empty-state" id="current-empty">
-                Нет текущих заявок
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/>
+                    <path d="M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+                    <path d="M12 12v4M12 12l2 2M12 12l-2 2"/>
+                </svg>
+                <div class="empty-state-text">Нет активных заявок</div>
+                <div class="empty-state-hint">Нажмите «+ Создать запрос» чтобы начать</div>
             </div>
         </div>
 
         <!-- Список заявок (архив) -->
         <div class="requests-list hidden" id="archive-list">
             <div class="empty-state" id="archive-empty">
-                Нет архивных заявок
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <path d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8"/>
+                    <path d="M10 12h4"/>
+                </svg>
+                <div class="empty-state-text">Архив пуст</div>
+                <div class="empty-state-hint">Выполненные заявки будут здесь</div>
             </div>
         </div>
 

@@ -1,9 +1,18 @@
 // Telegram WebApp API
-const tg = window.Telegram.WebApp;
+const tg = window.Telegram?.WebApp || {
+    expand: () => {},
+    initData: '',
+    showAlert: (msg) => alert(msg)
+};
 tg.expand();
 
 // API base URL
 const API_BASE = window.location.origin;
+
+// Demo mode detection
+const DEMO_MODE = !window.location.pathname.includes('/webapp/') ||
+                  window.location.protocol === 'file:' ||
+                  window.location.hostname === 'localhost';
 
 // Состояние приложения
 let state = {
@@ -17,6 +26,67 @@ let state = {
     archiveRequests: []
 };
 
+// Demo data for testing UI
+const DEMO_DATA = {
+    suppliers: [
+        { id: 1, name: 'ИП Иванов И.И.', is_default: true },
+        { id: 2, name: 'ООО "Торговый Дом"', is_default: false }
+    ],
+    warehouses: [
+        { id: 507, name: 'Коледино', region: 'Московская область' },
+        { id: 117501, name: 'Казань', region: 'Татарстан' },
+        { id: 130744, name: 'Краснодар', region: 'Краснодарский край' },
+        { id: 208277, name: 'Санкт-Петербург', region: 'Ленинградская область' }
+    ],
+    currentRequests: [
+        {
+            id: 1,
+            supplier_id: 1,
+            supplier_name: 'ИП Иванов И.И.',
+            nm_id: 12345678,
+            product_name: 'Футболка мужская хлопок',
+            source_warehouse_id: 507,
+            source_warehouse_name: 'Коледино',
+            target_warehouse_id: 117501,
+            target_warehouse_name: 'Казань',
+            quantity: 150,
+            status: 'searching',
+            created_at: new Date().toISOString()
+        },
+        {
+            id: 2,
+            supplier_id: 1,
+            supplier_name: 'ИП Иванов И.И.',
+            nm_id: 87654321,
+            product_name: 'Джинсы женские slim',
+            source_warehouse_id: 507,
+            source_warehouse_name: 'Коледино',
+            target_warehouse_id: 130744,
+            target_warehouse_name: 'Краснодар',
+            quantity: 75,
+            status: 'pending',
+            created_at: new Date(Date.now() - 86400000).toISOString()
+        }
+    ],
+    archiveRequests: [
+        {
+            id: 3,
+            supplier_id: 2,
+            supplier_name: 'ООО "Торговый Дом"',
+            nm_id: 11223344,
+            product_name: 'Куртка зимняя',
+            source_warehouse_id: 117501,
+            source_warehouse_name: 'Казань',
+            target_warehouse_id: 507,
+            target_warehouse_name: 'Коледино',
+            quantity: 30,
+            status: 'completed',
+            created_at: new Date(Date.now() - 172800000).toISOString(),
+            completed_at: new Date(Date.now() - 86400000).toISOString()
+        }
+    ]
+};
+
 // Утилиты
 function showLoader() {
     document.getElementById('loader').classList.remove('hidden');
@@ -27,7 +97,11 @@ function hideLoader() {
 }
 
 function showError(message) {
-    tg.showAlert(message);
+    if (DEMO_MODE) {
+        console.warn('Demo mode:', message);
+    } else {
+        tg.showAlert(message);
+    }
 }
 
 async function apiRequest(url, options = {}) {
@@ -52,28 +126,43 @@ async function apiRequest(url, options = {}) {
 
 // Инициализация
 async function init() {
+    // Всегда устанавливаем обработчики событий
+    setupEventListeners();
+
     try {
         showLoader();
 
-        // Загружаем поставщиков
-        state.suppliers = await apiRequest('/api/suppliers');
-
-        // Загружаем склады
-        state.warehouses = await apiRequest('/api/warehouses');
-
-        // Загружаем заявки
-        await loadRequests();
+        if (DEMO_MODE) {
+            // Demo mode - use mock data
+            console.log('🎨 Running in DEMO MODE');
+            state.suppliers = DEMO_DATA.suppliers;
+            state.warehouses = DEMO_DATA.warehouses;
+            state.currentRequests = DEMO_DATA.currentRequests;
+            state.archiveRequests = DEMO_DATA.archiveRequests;
+        } else {
+            // Production mode - load from API
+            state.suppliers = await apiRequest('/api/suppliers');
+            state.warehouses = await apiRequest('/api/warehouses');
+            await loadRequests();
+        }
 
         // Заполняем dropdown поставщиков
         populateSuppliers();
 
-        // Устанавливаем обработчики
-        setupEventListeners();
+        // Обновляем счётчики и рендерим
+        document.getElementById('current-count').textContent = state.currentRequests.length;
+        document.getElementById('archive-count').textContent = state.archiveRequests.length;
+        renderRequests();
 
         hideLoader();
     } catch (error) {
         hideLoader();
-        showError('Ошибка загрузки данных: ' + error.message);
+        console.error('Init error:', error);
+
+        // В случае ошибки - показываем demo данные
+        if (!DEMO_MODE) {
+            showError('Ошибка загрузки данных: ' + error.message);
+        }
     }
 }
 
@@ -215,37 +304,86 @@ function renderRequestsList(type, requests) {
 function createRequestCard(request, type) {
     const card = document.createElement('div');
     card.className = 'request-card';
+    card.dataset.requestId = request.id;
 
-    const statusClass = `status-${request.status}`;
     const statusText = {
         pending: 'Ожидание',
-        searching: 'Поиск слотов',
-        completed: 'Выполнено',
-        cancelled: 'Отменено'
+        searching: 'Поиск',
+        completed: 'Готово',
+        cancelled: 'Отмена'
     }[request.status] || request.status;
 
-    const createdDate = new Date(request.created_at).toLocaleDateString('ru-RU');
-    const completedDate = request.completed_at ?
-        ' → ' + new Date(request.completed_at).toLocaleDateString('ru-RU') : '';
+    const createdDate = new Date(request.created_at).toLocaleDateString('ru-RU', {
+        day: 'numeric',
+        month: 'short'
+    });
+
+    // Product name or article
+    const productName = request.product_name || `Артикул ${request.nm_id}`;
+
+    // Truncate warehouse names if too long
+    const sourceName = request.source_warehouse_name || `Склад ${request.source_warehouse_id}`;
+    const targetName = request.target_warehouse_name || `Склад ${request.target_warehouse_id}`;
 
     card.innerHTML = `
-        <div class="request-header">
-            <div class="request-supplier">${request.supplier_name}</div>
-            <div class="request-date">${createdDate}${completedDate}</div>
+        <div class="request-card-header">
+            <div class="request-product">
+                <div class="request-product-name">${productName}</div>
+                <div class="request-article">${request.nm_id}</div>
+            </div>
+            <div class="status-badge status-${request.status}">
+                <span class="status-dot"></span>
+                ${statusText}
+            </div>
         </div>
-        <div class="request-route">
-            <div class="warehouse-name">${request.source_warehouse_name || 'Склад ' + request.source_warehouse_id}</div>
-            <div class="route-arrow">→</div>
-            <div class="warehouse-name">${request.target_warehouse_name || 'Склад ' + request.target_warehouse_id}</div>
+
+        <div class="request-card-body">
+            <div class="request-route">
+                <div class="warehouse-block">
+                    <div class="warehouse-label">Откуда</div>
+                    <div class="warehouse-name">${sourceName}</div>
+                </div>
+                <div class="route-arrow">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M5 12h14M12 5l7 7-7 7"/>
+                    </svg>
+                </div>
+                <div class="warehouse-block">
+                    <div class="warehouse-label">Куда</div>
+                    <div class="warehouse-name">${targetName}</div>
+                </div>
+            </div>
         </div>
-        <div class="request-info">
-            <div>Арт: ${request.nm_id}</div>
-            <div>Кол-во: ${request.quantity}</div>
+
+        <div class="request-card-footer">
+            <!-- Количество - большое и по центру -->
+            <div class="request-quantity-display" data-request-id="${request.id}">
+                <span class="request-quantity">${request.quantity}</span>
+                <span class="request-quantity-label">шт</span>
+            </div>
+
+            <!-- Режим редактирования (скрыт по умолчанию) -->
+            <div class="request-edit-mode hidden" data-request-id="${request.id}">
+                <input type="number"
+                       class="request-edit-input"
+                       value="${request.quantity}"
+                       min="1"
+                       data-original="${request.quantity}">
+                <button class="btn-save" onclick="saveQuantity(${request.id})">Сохранить</button>
+                <button class="btn-cancel-edit" onclick="cancelEdit(${request.id})">Отмена</button>
+            </div>
+
+            <!-- Дата и поставщик -->
+            <div class="request-meta-row">
+                <span class="request-date">${createdDate}</span>
+                <span class="request-supplier">${request.supplier_name}</span>
+            </div>
         </div>
+
         ${type === 'current' ? `
-            <div class="request-actions">
-                <button class="btn-action btn-edit" onclick="editRequest(${request.id})">✏️ Изменить</button>
-                <button class="btn-action btn-delete" onclick="deleteRequest(${request.id})">🗑 Удалить</button>
+            <div class="request-actions" data-request-id="${request.id}">
+                <button class="btn-action" onclick="startEdit(${request.id})">Изменить</button>
+                <button class="btn-action btn-delete" onclick="deleteRequest(${request.id})">Удалить</button>
             </div>
         ` : ''}
     `;
@@ -407,30 +545,98 @@ async function createRequest() {
     }
 }
 
-// Редактирование заявки
-async function editRequest(requestId) {
-    const request = [...state.currentRequests, ...state.archiveRequests]
-        .find(r => r.id === requestId);
+// Inline редактирование - начать
+function startEdit(requestId) {
+    const card = document.querySelector(`.request-card[data-request-id="${requestId}"]`);
+    if (!card) return;
 
-    if (!request) return;
+    // Скрываем display, показываем edit mode
+    const display = card.querySelector(`.request-quantity-display[data-request-id="${requestId}"]`);
+    const editMode = card.querySelector(`.request-edit-mode[data-request-id="${requestId}"]`);
+    const actions = card.querySelector(`.request-actions[data-request-id="${requestId}"]`);
 
-    const newQuantity = prompt('Новое количество:', request.quantity);
-    if (!newQuantity) return;
+    if (display) display.classList.add('hidden');
+    if (editMode) {
+        editMode.classList.remove('hidden');
+        // Фокус на input
+        const input = editMode.querySelector('.request-edit-input');
+        if (input) {
+            input.focus();
+            input.select();
+        }
+    }
+    if (actions) actions.classList.add('hidden');
+}
+
+// Inline редактирование - сохранить
+async function saveQuantity(requestId) {
+    const card = document.querySelector(`.request-card[data-request-id="${requestId}"]`);
+    if (!card) return;
+
+    const editMode = card.querySelector(`.request-edit-mode[data-request-id="${requestId}"]`);
+    const input = editMode?.querySelector('.request-edit-input');
+    const newQuantity = parseInt(input?.value || 0);
+
+    if (!newQuantity || newQuantity < 1) {
+        showError('Введите корректное количество');
+        return;
+    }
 
     try {
-        showLoader();
-        await apiRequest(`/api/requests/${requestId}`, {
-            method: 'PATCH',
-            body: JSON.stringify({ quantity: parseInt(newQuantity) })
-        });
+        if (!DEMO_MODE) {
+            showLoader();
+            await apiRequest(`/api/requests/${requestId}`, {
+                method: 'PATCH',
+                body: JSON.stringify({ quantity: newQuantity })
+            });
+            hideLoader();
+            await loadRequests();
+        } else {
+            // Demo mode - обновляем локально
+            const request = state.currentRequests.find(r => r.id === requestId);
+            if (request) {
+                request.quantity = newQuantity;
+            }
+            // Обновляем UI
+            const display = card.querySelector(`.request-quantity-display[data-request-id="${requestId}"]`);
+            const quantitySpan = display?.querySelector('.request-quantity');
+            if (quantitySpan) quantitySpan.textContent = newQuantity;
 
-        hideLoader();
-        await loadRequests();
-        tg.showAlert('Заявка обновлена');
+            // Выходим из режима редактирования
+            cancelEdit(requestId);
+
+            console.log(`Demo: Updated quantity to ${newQuantity}`);
+        }
     } catch (error) {
         hideLoader();
         showError('Ошибка обновления: ' + error.message);
     }
+}
+
+// Inline редактирование - отмена
+function cancelEdit(requestId) {
+    const card = document.querySelector(`.request-card[data-request-id="${requestId}"]`);
+    if (!card) return;
+
+    const display = card.querySelector(`.request-quantity-display[data-request-id="${requestId}"]`);
+    const editMode = card.querySelector(`.request-edit-mode[data-request-id="${requestId}"]`);
+    const actions = card.querySelector(`.request-actions[data-request-id="${requestId}"]`);
+
+    // Восстанавливаем оригинальное значение
+    const input = editMode?.querySelector('.request-edit-input');
+    if (input) {
+        input.value = input.dataset.original;
+    }
+
+    // Показываем display, скрываем edit mode
+    if (display) display.classList.remove('hidden');
+    if (editMode) editMode.classList.add('hidden');
+    if (actions) actions.classList.remove('hidden');
+}
+
+// Старый метод - оставляем для совместимости
+async function editRequest(requestId) {
+    startEdit(requestId);
 }
 
 // Удаление заявки
@@ -438,14 +644,26 @@ async function deleteRequest(requestId) {
     if (!confirm('Удалить заявку?')) return;
 
     try {
-        showLoader();
-        await apiRequest(`/api/requests/${requestId}`, {
-            method: 'DELETE'
-        });
+        if (!DEMO_MODE) {
+            showLoader();
+            await apiRequest(`/api/requests/${requestId}`, {
+                method: 'DELETE'
+            });
+            hideLoader();
+            await loadRequests();
+        } else {
+            // Demo mode - удаляем локально
+            state.currentRequests = state.currentRequests.filter(r => r.id !== requestId);
+            state.archiveRequests = state.archiveRequests.filter(r => r.id !== requestId);
 
-        hideLoader();
-        await loadRequests();
-        tg.showAlert('Заявка удалена');
+            // Обновляем счётчики
+            document.getElementById('current-count').textContent = state.currentRequests.length;
+            document.getElementById('archive-count').textContent = state.archiveRequests.length;
+
+            // Перерендериваем
+            renderRequests();
+            console.log(`Demo: Deleted request ${requestId}`);
+        }
     } catch (error) {
         hideLoader();
         showError('Ошибка удаления: ' + error.message);
@@ -458,3 +676,6 @@ init();
 // Экспортируем функции для HTML onclick
 window.editRequest = editRequest;
 window.deleteRequest = deleteRequest;
+window.startEdit = startEdit;
+window.saveQuantity = saveQuantity;
+window.cancelEdit = cancelEdit;
