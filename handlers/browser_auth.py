@@ -11,12 +11,13 @@ import logging
 from io import BytesIO
 
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, BufferedInputFile, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove
+from aiogram.types import Message, CallbackQuery, BufferedInputFile, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
 from browser.auth import WBAuthService, AuthStatus, get_auth_service
+from config import Config
 from db_factory import get_database
 from utils.encryption import encrypt_token, decrypt_token
 
@@ -254,16 +255,42 @@ async def process_code(message: Message, state: FSMContext):
 
             supplier_info = f"\n📛 Магазин: <b>{session.supplier_name}</b>" if session.supplier_name else ""
 
-            await message.answer(
-                f"✅ <b>Авторизация успешна!</b>{supplier_info}\n"
-                f"📱 Номер: <code>{phone}</code>\n\n"
-                f"🔐 Сессия сохранена в защищённом хранилище.\n\n"
-                f"<b>Что дальше?</b>\n"
-                f"• /redistribute — создать заявку на перемещение\n"
-                f"• /sessions — посмотреть активные сессии\n"
-                f"• /logout — выйти из аккаунта",
-                parse_mode="HTML"
-            )
+            # Проверяем, настроен ли Mini App
+            webapp_url = Config.WEBAPP_URL
+            if webapp_url and webapp_url.startswith("https://"):
+                # Показываем кнопку Mini App
+                full_url = f"{webapp_url.rstrip('/')}/webapp/index.html"
+                keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(
+                        text="📦 Открыть Перераспределение",
+                        web_app=WebAppInfo(url=full_url)
+                    )],
+                    [InlineKeyboardButton(
+                        text="🔄 Войти в другой аккаунт",
+                        callback_data="reauth"
+                    )]
+                ])
+
+                await message.answer(
+                    f"✅ <b>Авторизация успешна!</b>{supplier_info}\n"
+                    f"📱 Номер: <code>{phone}</code>\n\n"
+                    f"🔐 Сессия сохранена в защищённом хранилище.\n\n"
+                    f"👇 <b>Нажмите кнопку ниже</b>, чтобы открыть панель перераспределения:",
+                    parse_mode="HTML",
+                    reply_markup=keyboard
+                )
+            else:
+                # Если Mini App не настроен, показываем команды
+                await message.answer(
+                    f"✅ <b>Авторизация успешна!</b>{supplier_info}\n"
+                    f"📱 Номер: <code>{phone}</code>\n\n"
+                    f"🔐 Сессия сохранена в защищённом хранилище.\n\n"
+                    f"<b>Что дальше?</b>\n"
+                    f"• /redistribute — создать заявку на перемещение\n"
+                    f"• /sessions — посмотреть активные сессии\n"
+                    f"• /logout — выйти из аккаунта",
+                    parse_mode="HTML"
+                )
 
         elif session.status == AuthStatus.INVALID_CODE:
             await message.answer(
