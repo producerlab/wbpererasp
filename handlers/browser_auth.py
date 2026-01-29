@@ -475,6 +475,55 @@ async def cmd_screenshot(message: Message):
         )
 
 
+# ==================== Fallback для кода без состояния ====================
+
+@router.message(F.text.regexp(r'^\d{6}$'))
+async def process_code_fallback(message: Message, state: FSMContext):
+    """
+    Fallback хэндлер для 6-значного кода, отправленного без активного состояния.
+    Срабатывает когда пользователь отправил код после ошибки авторизации.
+    """
+    current_state = await state.get_state()
+
+    # Если состояние waiting_code - пропускаем, обработает основной хэндлер
+    if current_state == AuthStates.waiting_code.state:
+        return
+
+    user_id = message.from_user.id
+    code = message.text.strip()
+
+    auth_service = get_auth_service()
+
+    # Проверяем, есть ли активная браузерная сессия
+    if auth_service.has_session(user_id):
+        # Есть сессия - пробуем отправить код
+        logger.info(f"[FALLBACK] User {user_id} отправил код {code[:2]}**** при наличии сессии")
+
+        data = await state.get_data()
+        phone = data.get('phone', 'неизвестен')
+
+        await message.answer("🔄 Проверяю код...")
+
+        try:
+            session = await auth_service.submit_code(user_id, code)
+            await _handle_code_result(message, state, session, phone)
+        except Exception as e:
+            logger.error(f"[FALLBACK] Ошибка при вводе кода: {e}")
+            await message.answer(
+                "❌ Произошла ошибка при проверке кода.\n\n"
+                "Начните авторизацию заново: /auth"
+            )
+    else:
+        # Нет сессии - предлагаем начать заново
+        logger.info(f"[FALLBACK] User {user_id} отправил код без активной сессии")
+        await message.answer(
+            "⚠️ <b>Сессия авторизации истекла</b>\n\n"
+            "Вы отправили код, но авторизация уже была прервана или завершена.\n\n"
+            "Чтобы войти заново, нажмите /auth",
+            parse_mode="HTML"
+        )
+
+
 # ==================== Отмена ====================
 
 @router.message(Command("cancel"), AuthStates)
