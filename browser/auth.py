@@ -36,6 +36,8 @@ class AuthStatus(Enum):
     INVALID_CODE = "invalid_code"        # Неверный код
     CODE_EXPIRED = "code_expired"        # Код истёк
     TOO_MANY_ATTEMPTS = "too_many"       # Слишком много попыток
+    WAITING_NEW_CODE = "waiting_new_code"  # Ожидание возможности запросить новый код
+    NEW_CODE_SENT = "new_code_sent"      # Новый код запрошен
 
 
 @dataclass
@@ -163,7 +165,15 @@ class WBAuthService:
     def has_session(self, user_id: int) -> bool:
         """Проверить, есть ли активная сессия для пользователя"""
         session = self._sessions.get(user_id)
-        return session is not None and session.status == AuthStatus.PENDING_CODE
+        if session is None:
+            return False
+        # Сессия активна в нескольких состояниях
+        active_statuses = {
+            AuthStatus.PENDING_CODE,
+            AuthStatus.WAITING_NEW_CODE,
+            AuthStatus.NEW_CODE_SENT,
+        }
+        return session.status in active_statuses
 
     async def start_auth(self, user_id: int, phone: str) -> AuthSession:
         """
@@ -531,7 +541,8 @@ class WBAuthService:
         if not session:
             raise ValueError(f"Сессия не найдена для user {user_id}")
 
-        if session.status != AuthStatus.PENDING_CODE:
+        # Можно отправлять код если ждём первый код или после запроса нового
+        if session.status not in {AuthStatus.PENDING_CODE, AuthStatus.NEW_CODE_SENT}:
             raise ValueError(f"Неверный статус сессии: {session.status}")
 
         # Валидация кода
@@ -647,6 +658,118 @@ class WBAuthService:
             session.error_message = str(e)
             logger.error(f"Ошибка при вводе кода: {e}")
             return session
+
+    async def request_new_code(self, user_id: int, max_wait_seconds: int = 70) -> AuthSession:
+        """
+        Дождаться появления кнопки "Запросить код" и нажать на неё.
+
+        WB показывает таймер ~1 минута после неверного кода,
+        затем появляется кнопка для запроса нового.
+
+        Args:
+            user_id: Telegram user ID
+            max_wait_seconds: Максимальное время ожидания
+
+        Returns:
+            AuthSession с обновлённым статусом
+        """
+        session = self._sessions.get(user_id)
+        if not session:
+            raise ValueError(f"Сессия не найдена для user {user_id}")
+
+        browser = await self._get_browser()
+        page = session.page
+
+        # Селекторы для кнопки запроса нового кода
+        new_code_selectors = [
+            'button:has-text("Запросить код")',
+            'button:has-text("запросить код")',
+            'button:has-text("Запросить заново")',
+            'button:has-text("Отправить код")',
+            'button:has-text("Получить код")',
+            'a:has-text("Запросить код")',
+            'span:has-text("Запросить код")',
+            '[class*="resend"]:not([disabled])',
+            '[class*="retry"]:not([disabled])',
+        ]
+
+        logger.info(f"[REQUEST_NEW_CODE] Ожидание кнопки запроса нового кода (до {max_wait_seconds} сек)...")
+        session.status = AuthStatus.WAITING_NEW_CODE
+
+        start_time = asyncio.get_event_loop().time()
+        button_found = None
+
+        while (asyncio.get_event_loop().time() - start_time) < max_wait_seconds:
+            # Проверяем каждый селектор
+            for selector in new_code_selectors:
+                try:
+                    button = await page.query_selector(selector)
+                    if button and await button.is_visible():
+                        # Проверяем что кнопка не disabled
+                        is_disabled = await button.get_attribute('disabled')
+                        if not is_disabled:
+                            button_text = await button.inner_text()
+                            logger.info(f"[REQUEST_NEW_CODE] Найдена кнопка: '{button_text}'")
+                            button_found = button
+                            break
+                except Exception as e:
+                    logger.debug(f"Ошибка при поиске кнопки {selector}: {e}")
+                    continue
+
+            if button_found:
+                break
+
+            # Также проверяем по тексту на странице
+            try:
+                body_text = await page.inner_text('body')
+                # Если таймер ещё идёт, продолжаем ждать
+                if 'запросить заново через' in body_text.lower():
+                    # Извлекаем оставшееся время для логирования
+                    import re
+                    match = re.search(r'через\s+(\d+)\s*(?:сек|секунд)', body_text, re.IGNORECASE)
+                    if match:
+                        remaining = match.group(1)
+                        logger.debug(f"[REQUEST_NEW_CODE] Таймер: осталось {remaining} сек")
+            except Exception:
+                pass
+
+            # Ждём 2 секунды перед следующей проверкой
+            await asyncio.sleep(2)
+
+        if not button_found:
+            logger.warning("[REQUEST_NEW_CODE] Кнопка запроса нового кода не появилась")
+            session.status = AuthStatus.FAILED
+            session.error_message = "Не удалось дождаться кнопки запроса нового кода"
+            return session
+
+        # Нажимаем кнопку
+        try:
+            await button_found.click()
+            logger.info("[REQUEST_NEW_CODE] Кнопка нажата")
+            await browser.human_delay(2000, 3000)
+
+            # Проверяем, появилось ли поле для ввода нового кода
+            code_input = await self._find_code_input(page)
+            if code_input:
+                session.status = AuthStatus.NEW_CODE_SENT
+                logger.info("[REQUEST_NEW_CODE] Новый код запрошен успешно")
+            else:
+                # Проверяем ошибки
+                error = await self._check_error(page)
+                if error:
+                    session.status = AuthStatus.FAILED
+                    session.error_message = error
+                else:
+                    # Возможно код уже отправлен, но поле не обнаружено
+                    session.status = AuthStatus.NEW_CODE_SENT
+                    logger.info("[REQUEST_NEW_CODE] Код запрошен (поле не найдено, но ошибок нет)")
+
+        except Exception as e:
+            logger.error(f"[REQUEST_NEW_CODE] Ошибка при нажатии кнопки: {e}")
+            session.status = AuthStatus.FAILED
+            session.error_message = f"Ошибка при запросе нового кода: {e}"
+
+        return session
 
     async def _find_phone_input(self, page: Page) -> Optional[Any]:
         """

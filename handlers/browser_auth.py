@@ -7,10 +7,12 @@ Handlers для авторизации через SMS в ЛК Wildberries.
 - /logout - выйти из сессии
 """
 
+import asyncio
 import logging
 from io import BytesIO
+from typing import TYPE_CHECKING
 
-from aiogram import Router, F
+from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, BufferedInputFile, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -299,16 +301,19 @@ async def _handle_code_result(message: Message, state: FSMContext, session, phon
             )
 
     elif session.status == AuthStatus.INVALID_CODE:
-        # WB сбрасывает код после неверной попытки - нужно запрашивать заново
-        await state.clear()
-        await auth_service.close_session(user_id)
+        # WB сбрасывает код после неверной попытки
+        # Не закрываем сессию - будем ждать и запрашивать новый код автоматически
         await message.answer(
             "❌ <b>Неверный код</b>\n\n"
             "Wildberries сбросил попытку ввода.\n"
             "Старый код больше не действует.\n\n"
-            "⏳ Подождите ~1 минуту и запросите новый код:\n"
-            "/auth",
+            "⏳ <b>Ожидайте ~1 минуту</b> — бот автоматически запросит новый код...",
             parse_mode="HTML"
+        )
+
+        # Запускаем фоновую задачу для ожидания и запроса нового кода
+        asyncio.create_task(
+            _wait_and_request_new_code(message.bot, user_id, phone, state)
         )
 
     elif session.status == AuthStatus.CODE_EXPIRED:
@@ -326,6 +331,76 @@ async def _handle_code_result(message: Message, state: FSMContext, session, phon
         await auth_service.close_session(user_id)
         error_msg = session.error_message or "Неизвестная ошибка"
         await message.answer(f"Ошибка: {error_msg}\n\nПопробуйте ещё раз: /auth")
+
+
+async def _wait_and_request_new_code(bot: Bot, user_id: int, phone: str, state: FSMContext):
+    """
+    Фоновая задача: ждёт появления кнопки запроса нового кода и нажимает её.
+
+    Args:
+        bot: Инстанс бота для отправки сообщений
+        user_id: Telegram user ID
+        phone: Номер телефона
+        state: FSM контекст
+    """
+    auth_service = get_auth_service()
+
+    try:
+        logger.info(f"[WAIT_NEW_CODE] Запуск фоновой задачи для user {user_id}")
+
+        # Ждём и запрашиваем новый код (до 70 сек)
+        session = await auth_service.request_new_code(user_id, max_wait_seconds=70)
+
+        if session.status == AuthStatus.NEW_CODE_SENT:
+            # Успех - новый код запрошен
+            await bot.send_message(
+                user_id,
+                "✅ <b>Новый код запрошен!</b>\n\n"
+                "📱 SMS с новым кодом должно прийти на ваш телефон.\n\n"
+                "Введите 6-значный код:",
+                parse_mode="HTML"
+            )
+            # Устанавливаем состояние ожидания кода
+            await state.set_state(AuthStates.waiting_code)
+            await state.update_data(phone=phone)
+            logger.info(f"[WAIT_NEW_CODE] Новый код запрошен для user {user_id}")
+
+        elif session.status == AuthStatus.WAITING_NEW_CODE:
+            # Всё ещё ждём - что-то пошло не так
+            await bot.send_message(
+                user_id,
+                "⚠️ Не удалось дождаться кнопки запроса нового кода.\n\n"
+                "Попробуйте начать заново: /auth",
+                parse_mode="HTML"
+            )
+            await state.clear()
+            await auth_service.close_session(user_id)
+
+        else:
+            # Ошибка
+            error_msg = session.error_message or "Неизвестная ошибка"
+            await bot.send_message(
+                user_id,
+                f"❌ Не удалось запросить новый код.\n\n"
+                f"Ошибка: {error_msg}\n\n"
+                f"Попробуйте начать заново: /auth",
+                parse_mode="HTML"
+            )
+            await state.clear()
+            await auth_service.close_session(user_id)
+
+    except Exception as e:
+        logger.error(f"[WAIT_NEW_CODE] Ошибка для user {user_id}: {e}")
+        try:
+            await bot.send_message(
+                user_id,
+                "❌ Произошла ошибка при запросе нового кода.\n\n"
+                "Попробуйте начать заново: /auth"
+            )
+            await state.clear()
+            await auth_service.close_session(user_id)
+        except Exception:
+            pass
 
 
 @router.message(AuthStates.waiting_code)
