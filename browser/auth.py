@@ -87,6 +87,10 @@ class WBAuthService:
             '[data-testid*="submit"]',
             # НЕ используем 'form button' - слишком широко, может найти кнопку dropdown
         ]),
+        # Селекторы для поля кода
+        # WB может использовать:
+        # 1. Одно поле с maxlength=6
+        # 2. 6 отдельных полей с maxlength=1
         'code_input': ', '.join([
             'input[type="tel"][maxlength="6"]',
             'input[type="text"][maxlength="6"]',
@@ -97,6 +101,16 @@ class WBAuthService:
             'input[class*="Code"]',
             'input[autocomplete="one-time-code"]',
             '[data-testid*="code"] input',
+        ]),
+        # Селекторы для отдельных полей кода (6 штук по 1 цифре)
+        'code_digit_inputs': ', '.join([
+            'input[maxlength="1"][type="tel"]',
+            'input[maxlength="1"][type="text"]',
+            'input[maxlength="1"][inputmode="numeric"]',
+            '[class*="code"] input[maxlength="1"]',
+            '[class*="sms"] input[maxlength="1"]',
+            '[class*="otp"] input',
+            '[class*="verification"] input[maxlength="1"]',
         ]),
         'code_submit': ', '.join([
             'button[type="submit"]',
@@ -111,6 +125,7 @@ class WBAuthService:
     def __init__(self):
         self._sessions: dict[int, AuthSession] = {}  # user_id -> AuthSession
         self._browser_service: Optional[BrowserService] = None
+        self._code_digit_inputs: Optional[list] = None  # 6 отдельных полей для цифр кода
 
     async def _get_browser(self) -> BrowserService:
         """Получить browser service"""
@@ -530,27 +545,69 @@ class WBAuthService:
         page = session.page
 
         try:
-            # Вводим код
+            # Находим поля для кода
             code_input = await self._find_code_input(page)
             if not code_input:
                 session.status = AuthStatus.FAILED
                 session.error_message = "Поле ввода кода не найдено"
                 return session
 
-            # Очищаем поле и вводим код
-            await code_input.fill('')
-            await browser.human_delay(300, 500)
+            # Проверяем, есть ли 6 отдельных полей для цифр (новый UI WB)
+            digit_inputs = getattr(self, '_code_digit_inputs', None)
 
-            for digit in code:
-                await page.keyboard.type(digit, delay=100)
-                await browser.human_delay(50, 150)
+            if digit_inputs and len(digit_inputs) >= len(code):
+                # Новый UI: вводим каждую цифру в отдельное поле
+                logger.info(f"Ввод кода в {len(digit_inputs)} отдельных полей")
+
+                for i, digit in enumerate(code):
+                    if i < len(digit_inputs):
+                        inp = digit_inputs[i]
+                        try:
+                            # Кликаем в поле
+                            await inp.click()
+                            await browser.human_delay(50, 100)
+                            # Очищаем если что-то есть
+                            await inp.fill('')
+                            await browser.human_delay(30, 60)
+                            # Вводим цифру
+                            await inp.type(digit, delay=80)
+                            await browser.human_delay(100, 200)
+                            logger.debug(f"Введена цифра {i+1}: {digit}")
+                        except Exception as e:
+                            logger.warning(f"Ошибка ввода цифры {i+1}: {e}")
+                            # Пробуем альтернативный способ - через keyboard
+                            await page.keyboard.type(digit, delay=100)
+                            await browser.human_delay(100, 200)
+
+                logger.info("Все цифры кода введены")
+            else:
+                # Старый UI: одно поле для всего кода
+                logger.info("Ввод кода в одно поле (классический UI)")
+
+                # Очищаем поле и вводим код
+                await code_input.fill('')
+                await browser.human_delay(300, 500)
+
+                for digit in code:
+                    await page.keyboard.type(digit, delay=100)
+                    await browser.human_delay(50, 150)
 
             await browser.human_delay(1000, 2000)
 
-            # Нажимаем подтверждение
-            submit_button = await self._find_submit_button(page)
-            if submit_button:
-                await submit_button.click()
+            # WB может автоматически отправить форму после ввода 6 цифр
+            # Проверяем, не изменился ли уже URL или контент
+            await browser.human_delay(500, 1000)
+
+            # Если ещё на той же странице - пробуем нажать кнопку
+            current_url = page.url
+            if '/login' in current_url or 'auth' in current_url.lower():
+                submit_button = await self._find_submit_button(page)
+                if submit_button:
+                    try:
+                        await submit_button.click()
+                        logger.info("Нажата кнопка подтверждения")
+                    except Exception as e:
+                        logger.debug(f"Не удалось нажать кнопку: {e}")
 
             # Ждём результат
             await browser.human_delay(3000, 5000)
@@ -694,7 +751,16 @@ class WBAuthService:
         return None
 
     async def _find_code_input(self, page: Page) -> Optional[Any]:
-        """Найти поле ввода SMS кода"""
+        """
+        Найти поле ввода SMS кода.
+
+        WB может использовать:
+        1. Одно поле с maxlength=6 (старый вариант)
+        2. 6 отдельных полей с maxlength=1 (новый вариант)
+
+        Returns:
+            Элемент для ввода (первое поле если их 6) или None
+        """
         try:
             # Сначала проверим текст страницы - есть ли сообщение об отправке кода
             body_text = await page.inner_text('body')
@@ -721,41 +787,117 @@ class WBAuthService:
                 logger.info(f"Текст страницы: {body_text[:300]}")
                 return None
 
-            element = await page.wait_for_selector(
-                self.SELECTORS['code_input'],
-                timeout=10000,
-                state='visible'
-            )
+            # === СТРАТЕГИЯ 1: Ищем 6 отдельных полей для цифр (новый UI WB) ===
+            logger.info("Стратегия 1: Ищем 6 отдельных полей для цифр...")
 
-            if element:
-                # Диагностика: что за элемент нашли
-                placeholder = await element.get_attribute('placeholder') or ''
-                maxlength = await element.get_attribute('maxlength') or ''
-                input_type = await element.get_attribute('type') or ''
-                value = await element.input_value()
-                logger.info(f"Найдено поле кода: type={input_type}, maxlength={maxlength}, placeholder='{placeholder}', value='{value}'")
+            # Ищем ВИДИМЫЕ input[maxlength="1"]
+            digit_inputs = await page.query_selector_all('input[maxlength="1"]:visible')
+            logger.info(f"Найдено {len(digit_inputs)} видимых input[maxlength='1']")
 
-                # Валидация: это ДОЛЖНО быть поле для кода, а не что-то другое
-                # Реальное поле кода имеет maxlength=6 или type=tel
-                is_valid_code_field = (
-                    maxlength == '6' or
-                    (input_type == 'tel' and not value) or
-                    'код' in placeholder.lower() or
-                    'code' in placeholder.lower()
+            if len(digit_inputs) >= 4:  # Минимум 4 поля для кода (некоторые сайты используют 4)
+                # Проверяем что это действительно поля для кода
+                valid_digit_inputs = []
+                for inp in digit_inputs:
+                    try:
+                        if await inp.is_visible():
+                            box = await inp.bounding_box()
+                            # Поле для цифры обычно квадратное или почти квадратное
+                            if box and 20 < box['width'] < 100 and 20 < box['height'] < 100:
+                                input_type = await inp.get_attribute('type') or ''
+                                inputmode = await inp.get_attribute('inputmode') or ''
+                                # Должно быть числовым
+                                if input_type in ['tel', 'text', 'number'] or inputmode == 'numeric':
+                                    valid_digit_inputs.append(inp)
+                    except Exception as e:
+                        logger.debug(f"Ошибка проверки digit input: {e}")
+                        continue
+
+                logger.info(f"Валидных полей для цифр: {len(valid_digit_inputs)}")
+
+                if len(valid_digit_inputs) >= 4:
+                    # Сохраняем все поля для метода submit_code
+                    self._code_digit_inputs = valid_digit_inputs
+                    logger.info(f"Найдено {len(valid_digit_inputs)} полей для ввода цифр кода (новый UI)")
+                    # Возвращаем первое поле
+                    return valid_digit_inputs[0]
+
+            # === СТРАТЕГИЯ 2: Ищем поля с селекторами для digit inputs ===
+            logger.info("Стратегия 2: Ищем по селекторам digit inputs...")
+            try:
+                digit_selector = self.SELECTORS['code_digit_inputs']
+                digit_elements = await page.query_selector_all(digit_selector)
+                visible_digits = []
+                for el in digit_elements:
+                    if await el.is_visible():
+                        visible_digits.append(el)
+
+                logger.info(f"Найдено {len(visible_digits)} видимых элементов по digit selectors")
+
+                if len(visible_digits) >= 4:
+                    self._code_digit_inputs = visible_digits
+                    logger.info(f"Найдено {len(visible_digits)} полей по digit selectors")
+                    return visible_digits[0]
+            except Exception as e:
+                logger.debug(f"Стратегия 2 не сработала: {e}")
+
+            # === СТРАТЕГИЯ 3: Классический подход - одно поле с maxlength=6 ===
+            logger.info("Стратегия 3: Ищем классическое поле с maxlength=6...")
+            self._code_digit_inputs = None  # Сбрасываем если были
+
+            try:
+                element = await page.wait_for_selector(
+                    self.SELECTORS['code_input'],
+                    timeout=5000,
+                    state='visible'
                 )
 
-                if not is_valid_code_field:
-                    logger.warning(f"Найденный элемент не похож на поле кода (type={input_type}, maxlength={maxlength})")
-                    return None
+                if element:
+                    # Диагностика: что за элемент нашли
+                    placeholder = await element.get_attribute('placeholder') or ''
+                    maxlength = await element.get_attribute('maxlength') or ''
+                    input_type = await element.get_attribute('type') or ''
+                    value = await element.input_value()
+                    logger.info(f"Найдено поле кода: type={input_type}, maxlength={maxlength}, placeholder='{placeholder}', value='{value}'")
 
-                # Если в поле уже есть значение (номер телефона) - это НЕ поле кода!
-                if value and len(value) > 6:
-                    logger.warning(f"Поле содержит значение '{value}' - это поле телефона, не кода!")
-                    return None
+                    # Валидация: это ДОЛЖНО быть поле для кода, а не что-то другое
+                    is_valid_code_field = (
+                        maxlength == '6' or
+                        (input_type == 'tel' and not value) or
+                        'код' in placeholder.lower() or
+                        'code' in placeholder.lower()
+                    )
 
-                return element
+                    if not is_valid_code_field:
+                        logger.warning(f"Найденный элемент не похож на поле кода (type={input_type}, maxlength={maxlength})")
+                    elif value and len(value) > 6:
+                        logger.warning(f"Поле содержит значение '{value}' - это поле телефона, не кода!")
+                    else:
+                        return element
+            except PlaywrightTimeout:
+                logger.debug("Timeout при поиске классического поля кода")
 
+            # === СТРАТЕГИЯ 4: Fallback - ищем любые видимые input рядом с текстом "код" ===
+            logger.info("Стратегия 4: Fallback - ищем input рядом с текстом про код...")
+            try:
+                # Находим все видимые input и проверяем их родителей на наличие текста про код
+                all_inputs = await page.query_selector_all('input:visible')
+                for inp in all_inputs:
+                    try:
+                        maxlength = await inp.get_attribute('maxlength') or ''
+                        if maxlength in ['1', '6']:
+                            # Проверяем родительский контейнер
+                            parent_text = await inp.evaluate('el => el.closest("div, form, section")?.innerText || ""')
+                            if any(kw in parent_text.lower() for kw in ['код', 'code', 'sms', 'смс']):
+                                logger.info(f"Найдено поле через fallback (maxlength={maxlength})")
+                                return inp
+                    except Exception:
+                        continue
+            except Exception as e:
+                logger.debug(f"Стратегия 4 не сработала: {e}")
+
+            logger.warning("Не удалось найти поле для ввода кода ни одной стратегией")
             return None
+
         except PlaywrightTimeout:
             logger.warning("Timeout при поиске поля кода - поле не появилось")
             return None
