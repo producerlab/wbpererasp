@@ -145,6 +145,11 @@ class WBAuthService:
 
         return '+' + digits
 
+    def has_session(self, user_id: int) -> bool:
+        """Проверить, есть ли активная сессия для пользователя"""
+        session = self._sessions.get(user_id)
+        return session is not None and session.status == AuthStatus.PENDING_CODE
+
     async def start_auth(self, user_id: int, phone: str) -> AuthSession:
         """
         Начать процесс авторизации.

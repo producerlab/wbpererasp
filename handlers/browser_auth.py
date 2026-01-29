@@ -114,10 +114,16 @@ async def _process_phone_auth(message: Message, state: FSMContext, phone: str):
         )
         return
 
+    # ВАЖНО: Устанавливаем состояние waiting_code СРАЗУ, до начала авторизации!
+    # Это нужно, чтобы если пользователь отправит код пока браузер работает,
+    # сообщение попало в правильный handler (process_code), а не в process_phone_text
+    await state.update_data(phone=normalized_phone)
+    await state.set_state(AuthStates.waiting_code)
+
     # Убираем клавиатуру с кнопкой
     await message.answer(
         f"📱 Номер: <code>{normalized_phone}</code>\n\n"
-        f"⏳ Запрашиваю SMS код...\n\n"
+        f"⏳ Запрашиваю SMS код... (это может занять 10-30 секунд)\n\n"
         f"🔒 Код одноразовый — после ввода он больше не действует.\n"
         f"📩 SMS придёт от <b>Wildberries</b>\n\n"
         f"Напишите 6-значный код из SMS сюда в чат.",
@@ -126,13 +132,37 @@ async def _process_phone_auth(message: Message, state: FSMContext, phone: str):
     )
 
     try:
-        # Начинаем авторизацию
+        # Начинаем авторизацию (занимает время - browser automation)
         session = await auth_service.start_auth(user_id, normalized_phone)
 
         if session.status == AuthStatus.PENDING_CODE:
-            # SMS отправлено, ждём код
-            await state.update_data(phone=normalized_phone)
-            await state.set_state(AuthStates.waiting_code)
+            # SMS отправлено, состояние уже установлено выше
+            # Проверяем, не отправил ли пользователь код пока мы ждали
+            data = await state.get_data()
+            pending_code = data.get('pending_code')
+
+            if pending_code and pending_code.isdigit() and len(pending_code) == 6:
+                # Код уже был отправлен — обрабатываем его автоматически
+                logger.info(f"Найден pending_code для user {user_id}, обрабатываем автоматически")
+                await message.answer(
+                    f"✅ SMS отправлено! Проверяю ваш код...",
+                    parse_mode="HTML"
+                )
+                # Очищаем pending_code
+                await state.update_data(pending_code=None)
+                # Вызываем submit_code
+                try:
+                    code_session = await auth_service.submit_code(user_id, pending_code)
+                    # Обрабатываем результат (копируем логику из process_code)
+                    await _handle_code_result(message, state, code_session, data.get('phone'))
+                except Exception as e:
+                    logger.error(f"Ошибка при автоматическом вводе кода: {e}")
+                    await message.answer(
+                        f"Код получен, но произошла ошибка.\n"
+                        f"Попробуйте ввести код ещё раз:"
+                    )
+                return
+
             await message.answer(
                 f"✅ SMS отправлено!\n\n"
                 f"📩 Код придёт от <b>Wildberries</b>\n"
@@ -203,6 +233,94 @@ async def _process_phone_auth(message: Message, state: FSMContext, phone: str):
         )
 
 
+async def _handle_code_result(message: Message, state: FSMContext, session, phone: str):
+    """Обработка результата submit_code (вынесено для переиспользования)"""
+    user_id = message.from_user.id
+    db = get_db()
+    auth_service = get_auth_service()
+
+    if session.status == AuthStatus.SUCCESS:
+        # Успешная авторизация - сохраняем сессию
+        cookies_json = auth_service._browser_service.serialize_cookies(session.cookies) if auth_service._browser_service else ""
+
+        if not cookies_json:
+            logger.error(f"Cookies пусты для user_id={user_id}")
+            await message.answer("Ошибка сохранения сессии. Попробуйте авторизоваться заново: /auth")
+            await state.clear()
+            await auth_service.close_session(user_id)
+            return
+
+        cookies_encrypted = encrypt_token(cookies_json)
+
+        session_id = db.add_browser_session(
+            user_id=user_id,
+            phone=phone,
+            cookies_encrypted=cookies_encrypted,
+            supplier_name=session.supplier_name
+        )
+
+        await state.clear()
+        await auth_service.close_session(user_id)
+
+        supplier_info = f"\n📛 Магазин: <b>{session.supplier_name}</b>" if session.supplier_name else ""
+
+        webapp_url = Config.WEBAPP_URL
+        if webapp_url and webapp_url.startswith("https://"):
+            full_url = f"{webapp_url.rstrip('/')}/webapp/index.html"
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="📦 Открыть Перераспределение",
+                    web_app=WebAppInfo(url=full_url)
+                )],
+                [InlineKeyboardButton(
+                    text="🔄 Войти в другой аккаунт",
+                    callback_data="reauth"
+                )]
+            ])
+
+            await message.answer(
+                f"✅ <b>Авторизация успешна!</b>{supplier_info}\n"
+                f"📱 Номер: <code>{phone}</code>\n\n"
+                f"🔐 Сессия сохранена в защищённом хранилище.\n\n"
+                f"👇 <b>Нажмите кнопку ниже</b>, чтобы открыть панель перераспределения:",
+                parse_mode="HTML",
+                reply_markup=keyboard
+            )
+        else:
+            await message.answer(
+                f"✅ <b>Авторизация успешна!</b>{supplier_info}\n"
+                f"📱 Номер: <code>{phone}</code>\n\n"
+                f"🔐 Сессия сохранена в защищённом хранилище.\n\n"
+                f"<b>Что дальше?</b>\n"
+                f"• /redistribute — создать заявку на перемещение\n"
+                f"• /sessions — посмотреть активные сессии\n"
+                f"• /logout — выйти из аккаунта",
+                parse_mode="HTML"
+            )
+
+    elif session.status == AuthStatus.INVALID_CODE:
+        await message.answer(
+            "Неверный код. Попробуйте ещё раз.\n"
+            "Введите 6-значный код из SMS:"
+        )
+
+    elif session.status == AuthStatus.CODE_EXPIRED:
+        await state.clear()
+        await auth_service.close_session(user_id)
+        await message.answer("Код истёк. Начните авторизацию заново: /auth")
+
+    elif session.status == AuthStatus.TOO_MANY_ATTEMPTS:
+        await state.clear()
+        await auth_service.close_session(user_id)
+        await message.answer("Слишком много попыток.\nПодождите несколько минут и попробуйте снова: /auth")
+
+    else:
+        await state.clear()
+        await auth_service.close_session(user_id)
+        error_msg = session.error_message or "Неизвестная ошибка"
+        await message.answer(f"Ошибка: {error_msg}\n\nПопробуйте ещё раз: /auth")
+
+
 @router.message(AuthStates.waiting_code)
 async def process_code(message: Message, state: FSMContext):
     """Обработка введённого SMS кода"""
@@ -221,106 +339,23 @@ async def process_code(message: Message, state: FSMContext):
     data = await state.get_data()
     phone = data.get('phone')
 
-    await message.answer("Проверяю код...")
-
     auth_service = get_auth_service()
+
+    # Проверяем, готова ли сессия (start_auth мог ещё не завершиться)
+    if not auth_service.has_session(user_id):
+        await message.answer(
+            "⏳ Подождите, идёт подготовка...\n\n"
+            "SMS ещё запрашивается. Как только придёт код — отправьте его снова."
+        )
+        # Сохраняем код в state, чтобы попробовать автоматически позже
+        await state.update_data(pending_code=code)
+        return
+
+    await message.answer("Проверяю код...")
 
     try:
         session = await auth_service.submit_code(user_id, code)
-
-        if session.status == AuthStatus.SUCCESS:
-            # Успешная авторизация - сохраняем сессию
-            cookies_json = auth_service._browser_service.serialize_cookies(session.cookies) if auth_service._browser_service else ""
-
-            # Проверка что cookies не пустые
-            if not cookies_json:
-                logger.error(f"Cookies пусты для user_id={user_id}, сессия не может быть сохранена")
-                await message.answer("Ошибка сохранения сессии. Попробуйте авторизоваться заново: /auth")
-                await state.clear()
-                await auth_service.close_session(user_id)
-                return
-
-            cookies_encrypted = encrypt_token(cookies_json)
-
-            # Сохраняем в БД
-            session_id = db.add_browser_session(
-                user_id=user_id,
-                phone=phone,
-                cookies_encrypted=cookies_encrypted,
-                supplier_name=session.supplier_name
-            )
-
-            await state.clear()
-            await auth_service.close_session(user_id)
-
-            supplier_info = f"\n📛 Магазин: <b>{session.supplier_name}</b>" if session.supplier_name else ""
-
-            # Проверяем, настроен ли Mini App
-            webapp_url = Config.WEBAPP_URL
-            if webapp_url and webapp_url.startswith("https://"):
-                # Показываем кнопку Mini App
-                full_url = f"{webapp_url.rstrip('/')}/webapp/index.html"
-                keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(
-                        text="📦 Открыть Перераспределение",
-                        web_app=WebAppInfo(url=full_url)
-                    )],
-                    [InlineKeyboardButton(
-                        text="🔄 Войти в другой аккаунт",
-                        callback_data="reauth"
-                    )]
-                ])
-
-                await message.answer(
-                    f"✅ <b>Авторизация успешна!</b>{supplier_info}\n"
-                    f"📱 Номер: <code>{phone}</code>\n\n"
-                    f"🔐 Сессия сохранена в защищённом хранилище.\n\n"
-                    f"👇 <b>Нажмите кнопку ниже</b>, чтобы открыть панель перераспределения:",
-                    parse_mode="HTML",
-                    reply_markup=keyboard
-                )
-            else:
-                # Если Mini App не настроен, показываем команды
-                await message.answer(
-                    f"✅ <b>Авторизация успешна!</b>{supplier_info}\n"
-                    f"📱 Номер: <code>{phone}</code>\n\n"
-                    f"🔐 Сессия сохранена в защищённом хранилище.\n\n"
-                    f"<b>Что дальше?</b>\n"
-                    f"• /redistribute — создать заявку на перемещение\n"
-                    f"• /sessions — посмотреть активные сессии\n"
-                    f"• /logout — выйти из аккаунта",
-                    parse_mode="HTML"
-                )
-
-        elif session.status == AuthStatus.INVALID_CODE:
-            await message.answer(
-                "Неверный код. Попробуйте ещё раз.\n"
-                "Введите 6-значный код из SMS:"
-            )
-
-        elif session.status == AuthStatus.CODE_EXPIRED:
-            await state.clear()
-            await auth_service.close_session(user_id)
-            await message.answer(
-                "Код истёк. Начните авторизацию заново: /auth"
-            )
-
-        elif session.status == AuthStatus.TOO_MANY_ATTEMPTS:
-            await state.clear()
-            await auth_service.close_session(user_id)
-            await message.answer(
-                "Слишком много попыток.\n"
-                "Подождите несколько минут и попробуйте снова: /auth"
-            )
-
-        else:
-            await state.clear()
-            await auth_service.close_session(user_id)
-            error_msg = session.error_message or "Неизвестная ошибка"
-            await message.answer(
-                f"Ошибка: {error_msg}\n\n"
-                f"Попробуйте ещё раз: /auth"
-            )
+        await _handle_code_result(message, state, session, phone)
 
     except Exception as e:
         logger.error(f"Ошибка при вводе кода: {e}")
