@@ -1027,6 +1027,32 @@ class WBAuthService:
                 logger.debug(f"Стратегия 4 не сработала: {e}")
 
             logger.warning("Не удалось найти поле для ввода кода ни одной стратегией")
+
+            # ДИАГНОСТИКА: Выводим все input элементы на странице
+            try:
+                all_inputs = await page.query_selector_all('input')
+                logger.info(f"=== ДИАГНОСТИКА: Все input элементы на странице ({len(all_inputs)}) ===")
+                for i, inp in enumerate(all_inputs):
+                    try:
+                        input_type = await inp.get_attribute('type') or ''
+                        name = await inp.get_attribute('name') or ''
+                        id_attr = await inp.get_attribute('id') or ''
+                        class_attr = await inp.get_attribute('class') or ''
+                        placeholder = await inp.get_attribute('placeholder') or ''
+                        maxlength = await inp.get_attribute('maxlength') or ''
+                        value = await inp.input_value() or ''
+                        is_visible = await inp.is_visible()
+
+                        logger.info(
+                            f"  Input[{i}]: type='{input_type}', name='{name}', id='{id_attr}', "
+                            f"class='{class_attr[:50]}', placeholder='{placeholder}', "
+                            f"maxlength='{maxlength}', value='{value[:20]}', visible={is_visible}"
+                        )
+                    except Exception as e:
+                        logger.debug(f"  Input[{i}]: Ошибка при чтении атрибутов: {e}")
+            except Exception as e:
+                logger.error(f"Ошибка при диагностике input элементов: {e}")
+
             return None
 
         except PlaywrightTimeout:
