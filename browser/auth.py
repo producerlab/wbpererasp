@@ -270,6 +270,9 @@ class WBAuthService:
                     # Короткая пауза для загрузки антибот-скриптов
                     await browser.human_delay(500, 800)  # Ускорено: 1000-2000ms → 500-800ms
 
+                    # Проверяем и принимаем cookie баннер если появился
+                    await self._accept_cookie_banner(page)
+
                     # Ищем поле ввода телефона
                     phone_input = await self._find_phone_input(page)
                     if phone_input:
@@ -642,6 +645,9 @@ class WBAuthService:
         page = session.page
 
         try:
+            # Сначала проверяем и принимаем cookie баннер если он есть
+            await self._accept_cookie_banner(page)
+
             # Находим поля для кода
             code_input = await self._find_code_input(page)
             if not code_input:
@@ -1022,6 +1028,63 @@ class WBAuthService:
 
         return None
 
+    async def _accept_cookie_banner(self, page: Page) -> bool:
+        """
+        Обнаруживает и принимает cookie notice от WB.
+
+        WB показывает баннер "Этот сайт использует cookie файлы..."
+        с кнопкой "Принимаю", который может перекрывать форму ввода кода.
+
+        Returns:
+            True если баннер найден и принят, False если не найден
+        """
+        try:
+            logger.info("🍪 Проверяем наличие cookie consent баннера...")
+
+            # Селекторы для кнопки "Принимаю" на cookie баннере
+            cookie_button_selectors = [
+                'button:has-text("Принимаю")',
+                'button:has-text("Принять")',
+                'button:has-text("Accept")',
+                '[class*="cookie"] button:has-text("Принимаю")',
+                '[class*="consent"] button:has-text("Принимаю")',
+                '[data-test*="cookie"] button',
+                '[data-test*="consent"] button',
+                'button[class*="accept"]',
+            ]
+
+            # Проверяем все селекторы параллельно
+            button_results = await asyncio.gather(
+                *[page.query_selector(selector) for selector in cookie_button_selectors],
+                return_exceptions=True
+            )
+
+            cookie_button = None
+            for result in button_results:
+                if not isinstance(result, Exception) and result:
+                    cookie_button = result
+                    break
+
+            if cookie_button:
+                # Проверяем, видима ли кнопка
+                is_visible = await cookie_button.is_visible()
+                if is_visible:
+                    logger.info("✅ Найден cookie consent баннер - принимаю...")
+                    await cookie_button.click()
+                    await asyncio.sleep(0.5)  # Даём время баннеру исчезнуть
+                    logger.info("✅ Cookie consent принят")
+                    return True
+                else:
+                    logger.debug("Cookie кнопка найдена, но не видима")
+            else:
+                logger.debug("Cookie consent баннер не найден (это нормально)")
+
+            return False
+
+        except Exception as e:
+            logger.warning(f"Ошибка при проверке cookie баннера: {e}")
+            return False
+
     async def _find_code_input(self, page: Page) -> Optional[Any]:
         """
         Найти поле ввода SMS кода.
@@ -1034,7 +1097,11 @@ class WBAuthService:
             Элемент для ввода (первое поле если их 6) или None
         """
         try:
-            # Сначала проверим текст страницы - есть ли сообщение об отправке кода
+            # Сначала проверяем и принимаем cookie баннер если он есть
+            # (он может появиться на любом этапе)
+            await self._accept_cookie_banner(page)
+
+            # Проверим текст страницы - есть ли сообщение об отправке кода
             body_text = await page.inner_text('body')
             body_lower = body_text.lower()
 
