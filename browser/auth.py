@@ -199,6 +199,28 @@ class WBAuthService:
             context = await browser.create_context()
             page = await browser.create_page(context)
 
+            # Перехватываем console errors для диагностики
+            console_errors = []
+
+            def handle_console(msg):
+                """Обработчик console messages"""
+                if msg.type in ['error', 'warning']:
+                    error_text = f"[{msg.type.upper()}] {msg.text}"
+                    console_errors.append(error_text)
+                    logger.warning(f"Browser console {msg.type}: {msg.text}")
+
+            page.on('console', handle_console)
+
+            # Инжектируем скрипт для сохранения console errors
+            await page.add_init_script('''
+                window.__console_errors__ = [];
+                const originalError = console.error;
+                console.error = function(...args) {
+                    window.__console_errors__.push(args.join(' '));
+                    originalError.apply(console, args);
+                };
+            ''')
+
             session = AuthSession(
                 user_id=user_id,
                 phone=normalized_phone,
@@ -446,6 +468,58 @@ class WBAuthService:
             logger.info(f"=== ДИАГНОСТИКА ПОСЛЕ SUBMIT ===")
             logger.info(f"URL: {page.url}")
             logger.info(f"Текст страницы (первые 400 символов): {body_text[:400]}")
+
+            # Проверяем console errors
+            console_errors = []
+            try:
+                # Получаем console logs через evaluate
+                console_logs = await page.evaluate('''() => {
+                    return window.__console_errors__ || [];
+                }''')
+                if console_logs:
+                    logger.warning(f"Console errors: {console_logs}")
+                    console_errors = console_logs
+            except Exception as e:
+                logger.debug(f"Не удалось получить console errors: {e}")
+
+            # Проверяем наличие сообщения об ошибке или предупреждения (скрытые элементы)
+            try:
+                error_elements = await page.query_selector_all('[class*="error"], [class*="warning"], [class*="alert"]')
+                for elem in error_elements:
+                    is_visible = await elem.is_visible()
+                    text = await elem.inner_text() if is_visible else await elem.text_content()
+                    if text and text.strip():
+                        logger.warning(f"Найден элемент с ошибкой/предупреждением (visible={is_visible}): {text.strip()[:200]}")
+            except Exception as e:
+                logger.debug(f"Не удалось проверить error elements: {e}")
+
+            # Проверяем, есть ли конкретное сообщение об отправке SMS
+            sms_sent_indicators = [
+                'код отправлен',
+                'смс отправлен',
+                'sms sent',
+                'введите код',
+                'запросить заново',
+            ]
+            sms_sent = any(indicator in body_text.lower() for indicator in sms_sent_indicators)
+            logger.info(f"Индикаторы отправки SMS на странице: {sms_sent}")
+
+            # Проверяем наличие таймера "Запросить заново через X секунд"
+            import re
+            timer_match = re.search(r'запросить.*?через\s+(\d+)\s*(секунд|минут)', body_text, re.IGNORECASE)
+            if timer_match:
+                time_value = timer_match.group(1)
+                time_unit = timer_match.group(2)
+                logger.info(f"✅ Найден таймер повторной отправки: через {time_value} {time_unit}")
+                logger.info("Это указывает, что WB действительно инициировал отправку SMS")
+            else:
+                logger.warning("⚠️ НЕ НАЙДЕН таймер 'Запросить заново через X секунд'")
+                logger.warning("Возможно, WB не отправил SMS, а только показал форму!")
+
+            if not sms_sent and not timer_match:
+                logger.error("❌ КРИТИЧНО: Нет никаких признаков отправки SMS!")
+                logger.error("Полный текст страницы для анализа:")
+                logger.error(body_text[:1000])  # Первая 1000 символов
 
             # Проверяем, есть ли поле телефона и что в нём
             phone_field_after = await self._find_phone_input(page)
