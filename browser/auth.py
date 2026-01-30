@@ -52,6 +52,7 @@ class AuthSession:
     error_message: Optional[str] = None  # Сообщение об ошибке
     supplier_name: Optional[str] = None  # Название поставщика из ЛК
     captcha_screenshot: Optional[bytes] = None  # Скриншот captcha для отправки пользователю
+    keep_alive_task: Optional[asyncio.Task] = None  # Background task для поддержания сессии
 
 
 class WBAuthService:
@@ -194,10 +195,14 @@ class WBAuthService:
             normalized_phone = self.normalize_phone(phone)
             logger.info(f"Начало авторизации для user {user_id}, phone {normalized_phone[:5]}***")
 
-            # Создаём сессию
+            # Создаём сессию с увеличенным timeout (5 минут вместо 30 секунд)
             browser = await self._get_browser()
             context = await browser.create_context()
+
+            # Устанавливаем долгий timeout для страницы (5 минут)
+            # Это нужно, чтобы сессия не истекала пока пользователь вводит SMS код
             page = await browser.create_page(context)
+            page.set_default_timeout(300000)  # 5 минут в миллисекундах
 
             # Перехватываем console errors для диагностики
             console_errors = []
@@ -229,6 +234,12 @@ class WBAuthService:
                 page=page
             )
             self._sessions[user_id] = session
+
+            # Запускаем keep-alive task для поддержания сессии
+            # Будет пинговать страницу каждые 30 секунд, пока ждём SMS код
+            keep_alive_task = asyncio.create_task(self._keep_session_alive(user_id, page))
+            # Сохраняем task в сессию для последующей отмены
+            session.keep_alive_task = keep_alive_task
 
             # Пробуем разные URL для авторизации (WB может менять структуру)
             phone_input = None
@@ -1492,6 +1503,34 @@ class WBAuthService:
 
         return None
 
+    async def _keep_session_alive(self, user_id: int, page: Page) -> None:
+        """
+        Background task для поддержания сессии активной.
+        Периодически пингует страницу, чтобы она не истекла.
+        """
+        try:
+            while True:
+                # Проверяем, существует ли ещё сессия
+                if user_id not in self._sessions:
+                    logger.debug(f"Keep-alive stopped: session removed for user {user_id}")
+                    break
+
+                # Ждём 30 секунд между пингами
+                await asyncio.sleep(30)
+
+                # Пингуем страницу - просто вызываем evaluate, чтобы убедиться что страница жива
+                try:
+                    await page.evaluate('() => document.title')
+                    logger.debug(f"Keep-alive ping successful for user {user_id}")
+                except Exception as e:
+                    logger.warning(f"Keep-alive ping failed for user {user_id}: {e}")
+                    # Если страница мертва - прекращаем пинги
+                    break
+        except asyncio.CancelledError:
+            logger.debug(f"Keep-alive task cancelled for user {user_id}")
+        except Exception as e:
+            logger.error(f"Keep-alive task error for user {user_id}: {e}")
+
     async def get_session(self, user_id: int) -> Optional[AuthSession]:
         """Получить текущую сессию пользователя"""
         return self._sessions.get(user_id)
@@ -1500,8 +1539,18 @@ class WBAuthService:
         """Закрыть сессию авторизации"""
         session = self._sessions.get(user_id)
         if session:
+            # Останавливаем keep-alive task если он существует
+            if session.keep_alive_task and not session.keep_alive_task.done():
+                session.keep_alive_task.cancel()
+                try:
+                    await session.keep_alive_task
+                except asyncio.CancelledError:
+                    pass
+
+            # Закрываем browser context
             if session.context:
                 await session.context.close()
+
             del self._sessions[user_id]
             logger.debug(f"Сессия закрыта для user {user_id}")
 

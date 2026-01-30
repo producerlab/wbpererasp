@@ -507,6 +507,83 @@ async def process_code(message: Message, state: FSMContext):
         session = await auth_service.submit_code(user_id, code)
         await _handle_code_result(message, state, session, phone)
 
+    except ValueError as e:
+        error_msg = str(e)
+        if "Сессия не найдена" in error_msg or "session" in error_msg.lower():
+            # Сессия истекла - автоматически перезапускаем авторизацию
+            logger.warning(f"Session expired for user {user_id}, auto-restarting auth with phone {phone}")
+
+            await message.answer(
+                "⚠️ <b>Сессия истекла</b>\n\n"
+                "Браузерная сессия была закрыта (слишком долго ждали код).\n"
+                "🔄 <b>Автоматически перезапускаю авторизацию...</b>",
+                parse_mode="HTML"
+            )
+
+            # Сохраняем код для автоматической отправки после перезапуска
+            await state.update_data(pending_code=code)
+
+            # Перезапускаем авторизацию с тем же номером
+            if phone:
+                try:
+                    # Создаем прогресс сообщение
+                    progress_msg = await message.answer(
+                        f"📱 Номер: <code>{phone}</code>\n\n"
+                        f"⏳ Повторная авторизация...",
+                        parse_mode="HTML"
+                    )
+
+                    # Запускаем авторизацию
+                    session = await auth_service.start_auth(user_id, phone)
+
+                    if session.status == AuthStatus.PENDING_CODE:
+                        await progress_msg.edit_text(
+                            f"✅ SMS отправлен заново!\n\n"
+                            f"📩 Код придёт от <b>Wildberries</b>.\n"
+                            f"Напишите 6-значный код:\n\n"
+                            f"💡 <b>Сохранённый код ({code}) будет проверен автоматически...</b>",
+                            parse_mode="HTML"
+                        )
+
+                        # Пробуем автоматически отправить сохранённый код
+                        await asyncio.sleep(1)
+                        try:
+                            code_session = await auth_service.submit_code(user_id, code)
+                            await _handle_code_result(message, state, code_session, phone)
+                        except Exception as retry_error:
+                            logger.error(f"Failed to auto-submit saved code: {retry_error}")
+                            await message.answer(
+                                "Не удалось автоматически отправить сохранённый код.\n"
+                                "Введите новый код из SMS:"
+                            )
+                    else:
+                        await progress_msg.delete()
+                        await message.answer(
+                            f"❌ Не удалось перезапустить авторизацию.\n\n"
+                            f"Попробуйте заново: /auth"
+                        )
+                except Exception as restart_error:
+                    logger.error(f"Failed to restart auth: {restart_error}")
+                    await state.clear()
+                    await message.answer(
+                        "❌ Не удалось автоматически перезапустить авторизацию.\n\n"
+                        "Попробуйте заново: /auth"
+                    )
+            else:
+                await state.clear()
+                await message.answer(
+                    "⚠️ Сессия истекла.\n\n"
+                    "Начните авторизацию заново: /auth"
+                )
+        else:
+            # Другая ошибка ValueError
+            logger.error(f"ValueError при вводе кода: {e}")
+            await state.clear()
+            await message.answer(
+                f"❌ Ошибка: {error_msg}\n\n"
+                "Попробуйте заново: /auth"
+            )
+
     except Exception as e:
         logger.error(f"Ошибка при вводе кода: {e}")
         await state.clear()
@@ -657,6 +734,23 @@ async def process_code_fallback(message: Message, state: FSMContext):
         try:
             session = await auth_service.submit_code(user_id, code)
             await _handle_code_result(message, state, session, phone)
+        except ValueError as e:
+            error_msg = str(e)
+            if "Сессия не найдена" in error_msg or "session" in error_msg.lower():
+                # Сессия истекла - информируем пользователя
+                logger.warning(f"[FALLBACK] Session expired for user {user_id}")
+                await message.answer(
+                    "⚠️ <b>Сессия авторизации истекла</b>\n\n"
+                    "Браузерная сессия была закрыта.\n\n"
+                    "Начните авторизацию заново: /auth",
+                    parse_mode="HTML"
+                )
+            else:
+                logger.error(f"[FALLBACK] ValueError: {e}")
+                await message.answer(
+                    f"❌ Ошибка: {error_msg}\n\n"
+                    "Начните авторизацию заново: /auth"
+                )
         except Exception as e:
             logger.error(f"[FALLBACK] Ошибка при вводе кода: {e}")
             await message.answer(
