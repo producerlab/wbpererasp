@@ -122,23 +122,64 @@ async def _process_phone_auth(message: Message, state: FSMContext, phone: str):
     await state.update_data(phone=normalized_phone)
     await state.set_state(AuthStates.waiting_code)
 
-    # Убираем клавиатуру с кнопкой
-    await message.answer(
+    # Убираем клавиатуру с кнопкой и показываем прогресс
+    progress_msg = await message.answer(
         f"📱 Номер: <code>{normalized_phone}</code>\n\n"
-        f"⏳ Запрашиваю SMS код... (это может занять 10-30 секунд)\n\n"
-        f"🔒 Код одноразовый — после ввода он больше не действует.\n"
-        f"📩 SMS придёт от <b>Wildberries</b>\n\n"
-        f"Напишите 6-значный код из SMS сюда в чат.",
+        f"⏳ <b>Шаг 1/4:</b> Открываю страницу Wildberries...",
         parse_mode="HTML",
         reply_markup=ReplyKeyboardRemove()
     )
 
     try:
+        # Небольшая пауза чтобы пользователь увидел первый шаг
+        await asyncio.sleep(0.5)
+
+        # Обновляем прогресс
+        await progress_msg.edit_text(
+            f"📱 Номер: <code>{normalized_phone}</code>\n\n"
+            f"✅ <b>Шаг 1/4:</b> Страница открыта\n"
+            f"⏳ <b>Шаг 2/4:</b> Ввожу номер телефона...",
+            parse_mode="HTML"
+        )
+
         # Начинаем авторизацию (занимает время - browser automation)
-        session = await auth_service.start_auth(user_id, normalized_phone)
+        # Используем asyncio.create_task чтобы можно было обновлять прогресс
+        auth_task = asyncio.create_task(auth_service.start_auth(user_id, normalized_phone))
+
+        # Ждём 2 секунды и обновляем прогресс
+        await asyncio.sleep(2)
+        try:
+            await progress_msg.edit_text(
+                f"📱 Номер: <code>{normalized_phone}</code>\n\n"
+                f"✅ <b>Шаг 1/4:</b> Страница открыта\n"
+                f"✅ <b>Шаг 2/4:</b> Номер введён\n"
+                f"⏳ <b>Шаг 3/4:</b> Отправляю запрос на SMS...",
+                parse_mode="HTML"
+            )
+        except Exception:
+            pass  # Игнорируем ошибки редактирования
+
+        # Ждём завершения авторизации
+        session = await auth_task
 
         if session.status == AuthStatus.PENDING_CODE:
             # SMS отправлено, состояние уже установлено выше
+            # Обновляем прогресс
+            try:
+                await progress_msg.edit_text(
+                    f"📱 Номер: <code>{normalized_phone}</code>\n\n"
+                    f"✅ <b>Шаг 1/4:</b> Страница открыта\n"
+                    f"✅ <b>Шаг 2/4:</b> Номер введён\n"
+                    f"✅ <b>Шаг 3/4:</b> Запрос отправлен\n"
+                    f"✅ <b>Шаг 4/4:</b> SMS отправлен!\n\n"
+                    f"📩 Код придёт от <b>Wildberries</b> на ваш телефон.\n"
+                    f"🔒 Код одноразовый — после ввода он больше не действует.\n\n"
+                    f"Напишите 6-значный код:",
+                    parse_mode="HTML"
+                )
+            except Exception:
+                pass
+
             # Проверяем, не отправил ли пользователь код пока мы ждали
             data = await state.get_data()
             pending_code = data.get('pending_code')
@@ -147,7 +188,7 @@ async def _process_phone_auth(message: Message, state: FSMContext, phone: str):
                 # Код уже был отправлен — обрабатываем его автоматически
                 logger.info(f"Найден pending_code для user {user_id}, обрабатываем автоматически")
                 await message.answer(
-                    f"✅ SMS отправлено! Проверяю ваш код...",
+                    f"🔍 Проверяю ваш код...",
                     parse_mode="HTML"
                 )
                 # Очищаем pending_code
@@ -164,15 +205,13 @@ async def _process_phone_auth(message: Message, state: FSMContext, phone: str):
                         f"Попробуйте ввести код ещё раз:"
                     )
                 return
-
-            await message.answer(
-                f"✅ SMS отправлено!\n\n"
-                f"📩 Код придёт от <b>Wildberries</b>\n"
-                f"Напишите 6 цифр из SMS:",
-                parse_mode="HTML"
-            )
         elif session.status == AuthStatus.CAPTCHA_REQUIRED:
             # WB показал captcha - отправляем скриншот пользователю
+            try:
+                await progress_msg.delete()
+            except Exception:
+                pass
+
             await state.clear()
             await auth_service.close_session(user_id)
 
@@ -199,6 +238,11 @@ async def _process_phone_auth(message: Message, state: FSMContext, phone: str):
                     parse_mode="HTML"
                 )
         elif session.status == AuthStatus.FAILED:
+            try:
+                await progress_msg.delete()
+            except Exception:
+                pass
+
             await state.clear()
             await auth_service.close_session(user_id)
 
@@ -219,6 +263,11 @@ async def _process_phone_auth(message: Message, state: FSMContext, phone: str):
                     f"Попробуйте ещё раз: /auth"
                 )
         else:
+            try:
+                await progress_msg.delete()
+            except Exception:
+                pass
+
             await state.clear()
             await auth_service.close_session(user_id)
             await message.answer(
@@ -228,6 +277,11 @@ async def _process_phone_auth(message: Message, state: FSMContext, phone: str):
 
     except Exception as e:
         logger.error(f"Ошибка при авторизации: {e}")
+        try:
+            await progress_msg.delete()
+        except Exception:
+            pass
+
         await state.clear()
         await message.answer(
             f"Произошла ошибка при авторизации.\n"

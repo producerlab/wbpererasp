@@ -58,10 +58,11 @@ class WBAuthService:
     """Сервис авторизации в ЛК Wildberries"""
 
     WB_SELLER_URL = "https://seller.wildberries.ru"
+    # Порядок оптимизирован: начинаем с самого вероятного URL
     WB_LOGIN_URLS = [
-        "https://seller.wildberries.ru/login",
-        "https://seller-auth.wildberries.ru/",
-        "https://seller.wildberries.ru"
+        "https://seller-auth.wildberries.ru/",  # Основной URL авторизации (первый)
+        "https://seller.wildberries.ru/login",  # Альтернативный
+        "https://seller.wildberries.ru"          # Fallback
     ]
 
     # Селекторы элементов на странице авторизации WB
@@ -214,16 +215,15 @@ class WBAuthService:
                 logger.info(f"Пробуем URL: {login_url}")
                 try:
                     await page.goto(login_url, wait_until='domcontentloaded', timeout=30000)
-                    await browser.human_delay(2000, 3000)
+                    await browser.human_delay(1000, 1500)  # Ускорено: 2000-3000ms → 1000-1500ms
 
                     # Логируем текущий URL (возможен редирект)
                     current_url = page.url
                     logger.info(f"Текущий URL после загрузки: {current_url}")
 
-                    # Имитируем человеческое поведение - случайные движения мыши
-                    logger.info("Имитация человеческого поведения...")
-                    await browser.random_mouse_movements(page, count=3)
-                    await browser.human_delay(500, 1000)
+                    # Минимальная имитация поведения (одно движение мыши)
+                    await browser.random_mouse_movements(page, count=1)  # Сокращено: 3 → 1
+                    await browser.human_delay(300, 500)  # Ускорено: 500-1000ms → 300-500ms
 
                     # Проверяем наличие captcha сразу после загрузки
                     if await self._detect_captcha(page):
@@ -234,8 +234,8 @@ class WBAuthService:
                         session.error_message = "Wildberries показал капчу. Попробуйте позже или с другого IP."
                         return session
 
-                    # Ждём дополнительно если есть защита от ботов
-                    await browser.human_delay(1000, 2000)
+                    # Короткая пауза для загрузки антибот-скриптов
+                    await browser.human_delay(500, 800)  # Ускорено: 1000-2000ms → 500-800ms
 
                     # Ищем поле ввода телефона
                     phone_input = await self._find_phone_input(page)
@@ -270,12 +270,11 @@ class WBAuthService:
             # Прокручиваем к полю ввода чтобы оно было видимо
             try:
                 await phone_input.scroll_into_view_if_needed()
-                await browser.human_delay(300, 500)
+                await browser.human_delay(200, 300)  # Ускорено: 300-500ms → 200-300ms
             except Exception as e:
                 logger.debug(f"scroll_into_view_if_needed не удался: {e}")
 
-            # Ещё немного случайных движений мыши перед вводом
-            await browser.random_mouse_movements(page, count=2)
+            # Убрано избыточное движение мыши для ускорения
 
             # Проверяем начальное значение поля
             initial_value = await phone_input.input_value()
@@ -316,25 +315,25 @@ class WBAuthService:
                 await page.keyboard.press('Backspace')
                 await browser.human_delay(100, 200)
 
-                # Вводим номер МЕДЛЕННО, цифра за цифрой
+                # Вводим номер (оптимизированная скорость)
                 logger.info("Начинаем ввод номера...")
                 for i, digit in enumerate(phone_digits):
-                    await page.keyboard.type(digit, delay=120)
-                    await browser.human_delay(50, 100)
-                    # Каждые 3 цифры делаем паузу
+                    await page.keyboard.type(digit, delay=60)  # Ускорено: 120ms → 60ms
+                    await browser.human_delay(30, 60)  # Ускорено: 50-100ms → 30-60ms
+                    # Каждые 3 цифры делаем короткую паузу
                     if (i + 1) % 3 == 0:
-                        await browser.human_delay(150, 250)
+                        await browser.human_delay(80, 120)  # Ускорено: 150-250ms → 80-120ms
 
                 logger.info("Номер введён")
 
                 # Ждём пока WB отформатирует номер
-                await browser.human_delay(500, 800)
+                await browser.human_delay(300, 500)  # Ускорено: 500-800ms → 300-500ms
             else:
                 # Fallback если не получили координаты
                 logger.warning("Не удалось получить координаты поля, пробуем fill()")
                 await phone_input.fill(phone_digits)
 
-            await browser.human_delay(500, 1000)
+            await browser.human_delay(300, 500)  # Ускорено: 500-1000ms → 300-500ms
 
             # Проверяем что номер введён (диагностика)
             input_value = await phone_input.input_value()
@@ -375,7 +374,7 @@ class WBAuthService:
                 try:
                     await submit_button.evaluate('el => el.click()')
                     logger.info("Выполнен JavaScript click по кнопке")
-                    await browser.human_delay(3000, 4000)
+                    await browser.human_delay(2000, 3000)  # Ускорено: 3000-4000ms → 2000-3000ms
 
                     code_input = await self._find_code_input(page)
                     if code_input:
@@ -398,7 +397,7 @@ class WBAuthService:
                     await browser.human_delay(100, 200)
 
                     await page.mouse.click(btn_x, btn_y)
-                    await browser.human_delay(3000, 4000)
+                    await browser.human_delay(2000, 3000)  # Ускорено: 3000-4000ms → 2000-3000ms
 
                     code_input = await self._find_code_input(page)
                     if code_input:
@@ -414,7 +413,7 @@ class WBAuthService:
                     await browser.human_delay(200, 300)
 
                 await page.keyboard.press('Enter')
-                await browser.human_delay(3000, 4000)
+                await browser.human_delay(2000, 3000)  # Ускорено: 3000-4000ms → 2000-3000ms
 
                 code_input = await self._find_code_input(page)
                 if code_input:
@@ -433,7 +432,7 @@ class WBAuthService:
                         }
                         return false;
                     ''')
-                    await browser.human_delay(3000, 4000)
+                    await browser.human_delay(2000, 3000)  # Ускорено: 3000-4000ms → 2000-3000ms
 
                     code_input = await self._find_code_input(page)
                     if code_input:
@@ -476,25 +475,25 @@ class WBAuthService:
                 logger.error(f"Ошибка авторизации: {error}")
                 return session
 
-            # Проверяем появление поля для кода (увеличенное ожидание)
+            # Проверяем появление поля для кода (оптимизированное ожидание)
             # WB может долго обрабатывать запрос
             code_input = None
-            max_attempts = 5
+            max_attempts = 3  # Уменьшено: 5 → 3
             for attempt in range(max_attempts):
                 logger.info(f"Ищем поле кода, попытка {attempt + 1}/{max_attempts}...")
                 code_input = await self._find_code_input(page)
                 if code_input:
                     break
-                # Ждём между попытками
-                await browser.human_delay(2000, 3000)
+                # Ждём между попытками (ускорено)
+                await browser.human_delay(1000, 1500)  # Ускорено: 2000-3000ms → 1000-1500ms
 
             if code_input:
                 session.status = AuthStatus.PENDING_CODE
                 logger.info(f"SMS отправлено на {normalized_phone[:5]}***")
             else:
-                # Последняя попытка - ждём ещё дольше
-                logger.info("Поле кода не найдено после всех попыток, ждём ещё 5 секунд...")
-                await browser.human_delay(5000, 6000)
+                # Последняя попытка - ждём ещё немного
+                logger.info("Поле кода не найдено после всех попыток, ждём ещё 2 секунды...")
+                await browser.human_delay(2000, 3000)  # Ускорено: 5000-6000ms → 2000-3000ms
                 code_input = await self._find_code_input(page)
 
                 if code_input:
@@ -792,40 +791,65 @@ class WBAuthService:
             'input[placeholder*="phone" i]',       # "phone"
         ]
 
-        for selector in placeholder_selectors:
-            try:
-                element = await page.query_selector(selector)
-                if element and await element.is_visible():
-                    placeholder = await element.get_attribute('placeholder') or ''
-                    logger.info(f"Найдено поле телефона по placeholder: '{placeholder}' через {selector}")
-                    return element
-            except Exception as e:
-                logger.debug(f"Селектор {selector} не сработал: {e}")
+        # Оптимизация: пробуем все селекторы параллельно
+        try:
+            elements = await asyncio.gather(
+                *[page.query_selector(selector) for selector in placeholder_selectors],
+                return_exceptions=True
+            )
+
+            for selector, element in zip(placeholder_selectors, elements):
+                if isinstance(element, Exception) or not element:
+                    continue
+                try:
+                    if await element.is_visible():
+                        placeholder = await element.get_attribute('placeholder') or ''
+                        logger.info(f"Найдено поле телефона по placeholder: '{placeholder}' через {selector}")
+                        return element
+                except Exception as e:
+                    logger.debug(f"Селектор {selector} не сработал: {e}")
+        except Exception as e:
+            logger.debug(f"Стратегия 1 не сработала: {e}")
 
         # Стратегия 2: Ищем все input[type="tel"] и берём последний (обычно это поле цифр)
         try:
             tel_inputs = await page.query_selector_all('input[type="tel"]')
             logger.info(f"Найдено {len(tel_inputs)} элементов input[type='tel']")
 
-            for i, inp in enumerate(tel_inputs):
-                placeholder = await inp.get_attribute('placeholder') or ''
-                name = await inp.get_attribute('name') or ''
-                class_attr = await inp.get_attribute('class') or ''
-                logger.info(f"  tel input [{i}]: placeholder='{placeholder}', name='{name}', class='{class_attr[:50]}'")
+            # Оптимизация: собираем атрибуты всех tel inputs параллельно
+            if tel_inputs:
+                all_attrs = await asyncio.gather(
+                    *[asyncio.gather(
+                        inp.get_attribute('placeholder'),
+                        inp.get_attribute('name'),
+                        inp.get_attribute('class'),
+                        return_exceptions=True
+                    ) for inp in tel_inputs],
+                    return_exceptions=True
+                )
 
-            # Если есть несколько tel inputs, берём последний (обычно это поле для цифр)
-            # Первый часто является частью dropdown выбора страны
-            if len(tel_inputs) >= 2:
-                element = tel_inputs[-1]  # Последний input
-                if await element.is_visible():
-                    logger.info("Используем последний input[type='tel'] (поле для цифр)")
-                    return element
-            elif len(tel_inputs) == 1:
-                # Только один tel input - используем его, но сначала кликаем мимо dropdown
-                element = tel_inputs[0]
-                if await element.is_visible():
-                    logger.info("Найден единственный input[type='tel']")
-                    return element
+                for i, attrs in enumerate(all_attrs):
+                    if isinstance(attrs, Exception):
+                        continue
+                    placeholder, name, class_attr = attrs
+                    placeholder = '' if isinstance(placeholder, Exception) else (placeholder or '')
+                    name = '' if isinstance(name, Exception) else (name or '')
+                    class_attr = '' if isinstance(class_attr, Exception) else (class_attr or '')
+                    logger.info(f"  tel input [{i}]: placeholder='{placeholder}', name='{name}', class='{class_attr[:50]}'")
+
+                # Если есть несколько tel inputs, берём последний (обычно это поле для цифр)
+                # Первый часто является частью dropdown выбора страны
+                if len(tel_inputs) >= 2:
+                    element = tel_inputs[-1]  # Последний input
+                    if await element.is_visible():
+                        logger.info("Используем последний input[type='tel'] (поле для цифр)")
+                        return element
+                elif len(tel_inputs) == 1:
+                    # Только один tel input - используем его, но сначала кликаем мимо dropdown
+                    element = tel_inputs[0]
+                    if await element.is_visible():
+                        logger.info("Найден единственный input[type='tel']")
+                        return element
         except Exception as e:
             logger.warning(f"Ошибка при поиске input[type='tel']: {e}")
 
@@ -840,15 +864,34 @@ class WBAuthService:
                 '[class*="phone-input"] input',
             ]
 
-            for selector in form_selectors:
-                elements = await page.query_selector_all(selector)
-                for element in elements:
-                    if await element.is_visible():
-                        # Проверяем что это не маленький input (dropdown обычно маленький)
-                        box = await element.bounding_box()
-                        if box and box['width'] > 100:  # Поле для номера шире
-                            logger.info(f"Найдено поле телефона в форме через {selector}, width={box['width']}")
-                            return element
+            # Оптимизация: собираем все элементы из всех селекторов параллельно
+            all_selector_results = await asyncio.gather(
+                *[page.query_selector_all(selector) for selector in form_selectors],
+                return_exceptions=True
+            )
+
+            # Объединяем все элементы
+            all_elements = []
+            for result in all_selector_results:
+                if not isinstance(result, Exception) and result:
+                    all_elements.extend(result)
+
+            # Проверяем элементы параллельно
+            if all_elements:
+                checks = await asyncio.gather(
+                    *[asyncio.gather(el.is_visible(), el.bounding_box(), return_exceptions=True)
+                      for el in all_elements],
+                    return_exceptions=True
+                )
+
+                for i, (element, check_results) in enumerate(zip(all_elements, checks)):
+                    if isinstance(check_results, Exception):
+                        continue
+                    is_visible, box = check_results
+                    if not isinstance(is_visible, Exception) and is_visible and \
+                       not isinstance(box, Exception) and box and box['width'] > 100:
+                        logger.info(f"Найдено поле телефона в форме, width={box['width']}")
+                        return element
         except Exception as e:
             logger.warning(f"Ошибка при поиске в форме: {e}")
 
@@ -857,19 +900,38 @@ class WBAuthService:
             inputs = await page.query_selector_all('input')
             logger.info(f"Найдено {len(inputs)} input элементов всего")
 
-            for inp in inputs:
-                if not await inp.is_visible():
-                    continue
+            # Оптимизация: проверяем все inputs параллельно
+            if inputs:
+                checks = await asyncio.gather(
+                    *[asyncio.gather(
+                        inp.is_visible(),
+                        inp.get_attribute('type'),
+                        inp.bounding_box(),
+                        return_exceptions=True
+                    ) for inp in inputs],
+                    return_exceptions=True
+                )
 
-                input_type = await inp.get_attribute('type') or 'text'
-                if input_type not in ['tel', 'text', 'number']:
-                    continue
+                for inp, check_results in zip(inputs, checks):
+                    if isinstance(check_results, Exception):
+                        continue
 
-                # Проверяем размер - поле для номера должно быть достаточно широким
-                box = await inp.bounding_box()
-                if box and box['width'] > 100:
-                    logger.info(f"Используем input type={input_type}, width={box['width']} как поле телефона")
-                    return inp
+                    is_visible, input_type, box = check_results
+
+                    if isinstance(is_visible, Exception) or not is_visible:
+                        continue
+                    if isinstance(input_type, Exception):
+                        input_type = 'text'
+                    else:
+                        input_type = input_type or 'text'
+
+                    if input_type not in ['tel', 'text', 'number']:
+                        continue
+
+                    # Проверяем размер - поле для номера должно быть достаточно широким
+                    if not isinstance(box, Exception) and box and box['width'] > 100:
+                        logger.info(f"Используем input type={input_type}, width={box['width']} как поле телефона")
+                        return inp
         except Exception as e:
             logger.error(f"Ошибка при поиске input: {e}")
 
@@ -924,26 +986,48 @@ class WBAuthService:
             logger.info("Стратегия 1: Ищем 6 отдельных полей для цифр...")
 
             # Сначала ищем по классу InputCell (WB использует этот класс без maxlength)
-            digit_inputs = await page.query_selector_all('input.InputCell-PB5beCCt55:visible')
+            digit_inputs = await page.query_selector_all('input.InputCell-PB5beCCt55')
             if not digit_inputs:
-                # Fallback: ищем ВИДИМЫЕ input[maxlength="1"]
-                digit_inputs = await page.query_selector_all('input[maxlength="1"]:visible')
-            logger.info(f"Найдено {len(digit_inputs)} видимых полей для цифр")
+                # Fallback: ищем input[maxlength="1"]
+                digit_inputs = await page.query_selector_all('input[maxlength="1"]')
+            logger.info(f"Найдено {len(digit_inputs)} полей для цифр")
 
             if len(digit_inputs) >= 4:  # Минимум 4 поля для кода (некоторые сайты используют 4)
                 # Проверяем что это действительно поля для кода
+                # Оптимизация: кэшируем результаты проверок в одном проходе
                 valid_digit_inputs = []
                 for inp in digit_inputs:
                     try:
-                        if await inp.is_visible():
-                            box = await inp.bounding_box()
-                            # Поле для цифры обычно квадратное или почти квадратное
-                            if box and 20 < box['width'] < 100 and 20 < box['height'] < 100:
-                                input_type = await inp.get_attribute('type') or ''
-                                inputmode = await inp.get_attribute('inputmode') or ''
-                                # Должно быть числовым
-                                if input_type in ['tel', 'text', 'number'] or inputmode == 'numeric':
-                                    valid_digit_inputs.append(inp)
+                        # Одновременно получаем видимость и box за один раз
+                        is_visible, box = await asyncio.gather(
+                            inp.is_visible(),
+                            inp.bounding_box(),
+                            return_exceptions=True
+                        )
+
+                        # Проверяем результаты
+                        if isinstance(is_visible, Exception) or not is_visible:
+                            continue
+                        if isinstance(box, Exception) or not box:
+                            continue
+
+                        # Поле для цифры обычно квадратное или почти квадратное
+                        if not (20 < box['width'] < 100 and 20 < box['height'] < 100):
+                            continue
+
+                        # Получаем атрибуты параллельно
+                        input_type, inputmode = await asyncio.gather(
+                            inp.get_attribute('type'),
+                            inp.get_attribute('inputmode'),
+                            return_exceptions=True
+                        )
+
+                        input_type = '' if isinstance(input_type, Exception) else (input_type or '')
+                        inputmode = '' if isinstance(inputmode, Exception) else (inputmode or '')
+
+                        # Должно быть числовым
+                        if input_type in ['tel', 'text', 'number'] or inputmode == 'numeric':
+                            valid_digit_inputs.append(inp)
                     except Exception as e:
                         logger.debug(f"Ошибка проверки digit input: {e}")
                         continue
@@ -962,17 +1046,24 @@ class WBAuthService:
             try:
                 digit_selector = self.SELECTORS['code_digit_inputs']
                 digit_elements = await page.query_selector_all(digit_selector)
-                visible_digits = []
-                for el in digit_elements:
-                    if await el.is_visible():
-                        visible_digits.append(el)
 
-                logger.info(f"Найдено {len(visible_digits)} видимых элементов по digit selectors")
+                # Оптимизация: проверяем видимость параллельно для всех элементов
+                if digit_elements:
+                    visibility_checks = await asyncio.gather(
+                        *[el.is_visible() for el in digit_elements],
+                        return_exceptions=True
+                    )
+                    visible_digits = [
+                        el for el, is_vis in zip(digit_elements, visibility_checks)
+                        if not isinstance(is_vis, Exception) and is_vis
+                    ]
 
-                if len(visible_digits) >= 4:
-                    self._code_digit_inputs = visible_digits
-                    logger.info(f"Найдено {len(visible_digits)} полей по digit selectors")
-                    return visible_digits[0]
+                    logger.info(f"Найдено {len(visible_digits)} видимых элементов по digit selectors")
+
+                    if len(visible_digits) >= 4:
+                        self._code_digit_inputs = visible_digits
+                        logger.info(f"Найдено {len(visible_digits)} полей по digit selectors")
+                        return visible_digits[0]
             except Exception as e:
                 logger.debug(f"Стратегия 2 не сработала: {e}")
 
@@ -1033,30 +1124,56 @@ class WBAuthService:
 
             logger.warning("Не удалось найти поле для ввода кода ни одной стратегией")
 
-            # ДИАГНОСТИКА: Выводим все input элементы на странице
-            try:
-                all_inputs = await page.query_selector_all('input')
-                logger.info(f"=== ДИАГНОСТИКА: Все input элементы на странице ({len(all_inputs)}) ===")
-                for i, inp in enumerate(all_inputs):
-                    try:
-                        input_type = await inp.get_attribute('type') or ''
-                        name = await inp.get_attribute('name') or ''
-                        id_attr = await inp.get_attribute('id') or ''
-                        class_attr = await inp.get_attribute('class') or ''
-                        placeholder = await inp.get_attribute('placeholder') or ''
-                        maxlength = await inp.get_attribute('maxlength') or ''
-                        value = await inp.input_value() or ''
-                        is_visible = await inp.is_visible()
+            # ДИАГНОСТИКА: Выводим все input элементы на странице (только в debug режиме)
+            if logger.level <= logging.DEBUG:
+                try:
+                    all_inputs = await page.query_selector_all('input')
+                    logger.info(f"=== ДИАГНОСТИКА: Все input элементы на странице ({len(all_inputs)}) ===")
 
-                        logger.info(
-                            f"  Input[{i}]: type='{input_type}', name='{name}', id='{id_attr}', "
-                            f"class='{class_attr[:50]}', placeholder='{placeholder}', "
-                            f"maxlength='{maxlength}', value='{value[:20]}', visible={is_visible}"
+                    # Оптимизация: собираем атрибуты всех элементов параллельно
+                    if all_inputs:
+                        all_attrs = await asyncio.gather(
+                            *[asyncio.gather(
+                                inp.get_attribute('type'),
+                                inp.get_attribute('name'),
+                                inp.get_attribute('id'),
+                                inp.get_attribute('class'),
+                                inp.get_attribute('placeholder'),
+                                inp.get_attribute('maxlength'),
+                                inp.input_value(),
+                                inp.is_visible(),
+                                return_exceptions=True
+                            ) for inp in all_inputs],
+                            return_exceptions=True
                         )
-                    except Exception as e:
-                        logger.debug(f"  Input[{i}]: Ошибка при чтении атрибутов: {e}")
-            except Exception as e:
-                logger.error(f"Ошибка при диагностике input элементов: {e}")
+
+                        for i, attrs in enumerate(all_attrs):
+                            try:
+                                if isinstance(attrs, Exception):
+                                    logger.debug(f"  Input[{i}]: Ошибка при чтении атрибутов: {attrs}")
+                                    continue
+
+                                input_type, name, id_attr, class_attr, placeholder, maxlength, value, is_visible = attrs
+
+                                # Обрабатываем возможные исключения в отдельных атрибутах
+                                input_type = '' if isinstance(input_type, Exception) else (input_type or '')
+                                name = '' if isinstance(name, Exception) else (name or '')
+                                id_attr = '' if isinstance(id_attr, Exception) else (id_attr or '')
+                                class_attr = '' if isinstance(class_attr, Exception) else (class_attr or '')
+                                placeholder = '' if isinstance(placeholder, Exception) else (placeholder or '')
+                                maxlength = '' if isinstance(maxlength, Exception) else (maxlength or '')
+                                value = '' if isinstance(value, Exception) else (value or '')
+                                is_visible = False if isinstance(is_visible, Exception) else is_visible
+
+                                logger.info(
+                                    f"  Input[{i}]: type='{input_type}', name='{name}', id='{id_attr}', "
+                                    f"class='{class_attr[:50]}', placeholder='{placeholder}', "
+                                    f"maxlength='{maxlength}', value='{value[:20]}', visible={is_visible}"
+                                )
+                            except Exception as e:
+                                logger.debug(f"  Input[{i}]: Ошибка при обработке атрибутов: {e}")
+                except Exception as e:
+                    logger.error(f"Ошибка при диагностике input элементов: {e}")
 
             return None
 
@@ -1075,30 +1192,47 @@ class WBAuthService:
                 'button:has-text("Продолжить")',
             ]
 
-            for selector in specific_buttons:
-                try:
-                    button = await page.wait_for_selector(selector, timeout=2000, state='visible')
-                    if button:
-                        text = await button.inner_text()
-                        logger.info(f"Найдена кнопка по селектору {selector}: '{text}'")
+            # Оптимизация: проверяем все селекторы одновременно с коротким таймаутом
+            button_checks = await asyncio.gather(
+                *[page.query_selector(selector) for selector in specific_buttons],
+                return_exceptions=True
+            )
 
-                        # Проверяем что кнопка достаточно большая (не часть dropdown)
-                        box = await button.bounding_box()
-                        if box and box['width'] > 50 and box['height'] > 20:
-                            return button
-                        else:
-                            logger.warning(f"Кнопка слишком маленькая (width={box['width'] if box else 0}), пропускаем")
-                except PlaywrightTimeout:
+            for selector, button in zip(specific_buttons, button_checks):
+                if isinstance(button, Exception) or not button:
+                    continue
+                try:
+                    # Проверяем видимость, текст и размер параллельно
+                    is_visible, text, box = await asyncio.gather(
+                        button.is_visible(),
+                        button.inner_text(),
+                        button.bounding_box(),
+                        return_exceptions=True
+                    )
+
+                    if isinstance(is_visible, Exception) or not is_visible:
+                        continue
+
+                    text = '' if isinstance(text, Exception) else text
+                    logger.info(f"Найдена кнопка по селектору {selector}: '{text}'")
+
+                    # Проверяем что кнопка достаточно большая (не часть dropdown)
+                    if not isinstance(box, Exception) and box and box['width'] > 50 and box['height'] > 20:
+                        return button
+                    else:
+                        logger.warning(f"Кнопка слишком маленькая (width={box['width'] if box and not isinstance(box, Exception) else 0}), пропускаем")
+                except Exception as e:
+                    logger.debug(f"Ошибка при проверке кнопки {selector}: {e}")
                     continue
 
             # Fallback: ищем button[type="submit"]
             try:
-                button = await page.wait_for_selector('button[type="submit"]', timeout=2000, state='visible')
-                if button:
+                button = await page.query_selector('button[type="submit"]')
+                if button and await button.is_visible():
                     text = await button.inner_text()
                     logger.info(f"Найдена кнопка type=submit: '{text}'")
                     return button
-            except PlaywrightTimeout:
+            except Exception:
                 pass
 
             logger.warning("Не найдена кнопка отправки формы")
