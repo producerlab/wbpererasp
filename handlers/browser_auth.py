@@ -135,19 +135,23 @@ async def _process_phone_auth(message: Message, state: FSMContext, phone: str):
         await asyncio.sleep(0.5)
 
         # Обновляем прогресс
-        await progress_msg.edit_text(
-            f"📱 Номер: <code>{normalized_phone}</code>\n\n"
-            f"✅ <b>Шаг 1/4:</b> Страница открыта\n"
-            f"⏳ <b>Шаг 2/4:</b> Ввожу номер телефона...",
-            parse_mode="HTML"
-        )
+        try:
+            await progress_msg.edit_text(
+                f"📱 Номер: <code>{normalized_phone}</code>\n\n"
+                f"✅ <b>Шаг 1/4:</b> Страница открыта\n"
+                f"⏳ <b>Шаг 2/4:</b> Ввожу номер телефона...",
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            logger.debug(f"Ошибка при редактировании сообщения (шаг 1→2): {e}")
+            pass  # Игнорируем ошибки редактирования
 
         # Начинаем авторизацию (занимает время - browser automation)
         # Используем asyncio.create_task чтобы можно было обновлять прогресс
         auth_task = asyncio.create_task(auth_service.start_auth(user_id, normalized_phone))
 
-        # Ждём 2 секунды и обновляем прогресс
-        await asyncio.sleep(2)
+        # Ждём 3 секунды и обновляем прогресс (увеличено для Telegram API)
+        await asyncio.sleep(3)
         try:
             await progress_msg.edit_text(
                 f"📱 Номер: <code>{normalized_phone}</code>\n\n"
@@ -156,7 +160,8 @@ async def _process_phone_auth(message: Message, state: FSMContext, phone: str):
                 f"⏳ <b>Шаг 3/4:</b> Отправляю запрос на SMS...",
                 parse_mode="HTML"
             )
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Ошибка при редактировании сообщения (шаг 2→3): {e}")
             pass  # Игнорируем ошибки редактирования
 
         # Ждём завершения авторизации
@@ -164,8 +169,10 @@ async def _process_phone_auth(message: Message, state: FSMContext, phone: str):
 
         if session.status == AuthStatus.PENDING_CODE:
             # SMS отправлено, состояние уже установлено выше
-            # Обновляем прогресс
+            # Обновляем прогресс (финальное сообщение)
             try:
+                # Небольшая пауза перед финальным редактированием
+                await asyncio.sleep(1)
                 await progress_msg.edit_text(
                     f"📱 Номер: <code>{normalized_phone}</code>\n\n"
                     f"✅ <b>Шаг 1/4:</b> Страница открыта\n"
@@ -177,8 +184,15 @@ async def _process_phone_auth(message: Message, state: FSMContext, phone: str):
                     f"Напишите 6-значный код:",
                     parse_mode="HTML"
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Ошибка при редактировании финального сообщения: {e}")
+                # Если не удалось отредактировать - отправляем новое сообщение
+                await message.answer(
+                    f"✅ SMS отправлен!\n\n"
+                    f"📩 Код придёт от <b>Wildberries</b> на ваш телефон.\n"
+                    f"Напишите 6-значный код:",
+                    parse_mode="HTML"
+                )
 
             # Проверяем, не отправил ли пользователь код пока мы ждали
             data = await state.get_data()
