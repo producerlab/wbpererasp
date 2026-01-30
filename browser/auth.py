@@ -106,6 +106,8 @@ class WBAuthService:
         ]),
         # Селекторы для отдельных полей кода (6 штук по 1 цифре)
         'code_digit_inputs': ', '.join([
+            'input.InputCell-PB5beCCt55',  # WB использует этот класс
+            'input[class*="InputCell"]',   # Вариация класса
             'input[maxlength="1"][type="tel"]',
             'input[maxlength="1"][type="text"]',
             'input[maxlength="1"][inputmode="numeric"]',
@@ -921,9 +923,12 @@ class WBAuthService:
             # === СТРАТЕГИЯ 1: Ищем 6 отдельных полей для цифр (новый UI WB) ===
             logger.info("Стратегия 1: Ищем 6 отдельных полей для цифр...")
 
-            # Ищем ВИДИМЫЕ input[maxlength="1"]
-            digit_inputs = await page.query_selector_all('input[maxlength="1"]:visible')
-            logger.info(f"Найдено {len(digit_inputs)} видимых input[maxlength='1']")
+            # Сначала ищем по классу InputCell (WB использует этот класс без maxlength)
+            digit_inputs = await page.query_selector_all('input.InputCell-PB5beCCt55:visible')
+            if not digit_inputs:
+                # Fallback: ищем ВИДИМЫЕ input[maxlength="1"]
+                digit_inputs = await page.query_selector_all('input[maxlength="1"]:visible')
+            logger.info(f"Найдено {len(digit_inputs)} видимых полей для цифр")
 
             if len(digit_inputs) >= 4:  # Минимум 4 поля для кода (некоторые сайты используют 4)
                 # Проверяем что это действительно поля для кода
