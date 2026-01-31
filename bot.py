@@ -60,6 +60,7 @@ async def cmd_start(message: Message, state: FSMContext):
 
         # Проверяем админа
         is_admin = user_id in Config.ADMIN_IDS
+        logger.info(f"[START] Admin check: user_id={user_id}, is_admin={is_admin}, ADMIN_IDS={Config.ADMIN_IDS}")
         if is_admin:
             logger.info(f"[START] ADMIN user detected: {user_id}")
 
@@ -257,6 +258,11 @@ async def main():
     Config.validate()
     logger.info("Configuration validated")
     logger.info(Config.get_summary())
+
+    # ОТЛАДКА: Показываем ADMIN_IDS
+    logger.info(f"🔐 ADMIN_IDS: {Config.ADMIN_IDS}")
+    logger.info(f"🔐 ADMIN_IDS type: {type(Config.ADMIN_IDS)}")
+    logger.info(f"🔐 ADMIN_IDS count: {len(Config.ADMIN_IDS)}")
 
     # Инициализация БД
     db = get_database()
