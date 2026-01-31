@@ -8,6 +8,7 @@ from typing import List, Dict
 
 from database import Database
 from api.main import get_current_user, get_db
+from config import Config
 
 
 router = APIRouter()
@@ -52,12 +53,52 @@ async def get_suppliers(
     logger = logging.getLogger(__name__)
     logger.info(f"[GET /suppliers] user_id={user_id}")
 
+    # Проверяем админа
+    is_admin = user_id in Config.ADMIN_IDS
+    if is_admin:
+        logger.info(f"[GET /suppliers] ADMIN user detected: {user_id}")
+
     suppliers = db.get_suppliers(user_id)
     logger.info(f"[GET /suppliers] Existing suppliers: {len(suppliers)}")
 
+    # АДМИНСКИЙ РЕЖИМ: создаем моковые suppliers для тестирования
+    if not suppliers and is_admin:
+        logger.info(f"[GET /suppliers] Creating MOCK suppliers for admin")
+        try:
+            # Создаем фейковый токен
+            token_id = db.add_wb_token(
+                user_id=user_id,
+                encrypted_token="admin_mock_session",
+                name="Admin DEMO Token"
+            )
+            logger.info(f"[GET /suppliers] Created admin token_id={token_id}")
+
+            # Создаем несколько тестовых suppliers
+            mock_suppliers = [
+                "EALY PERFUMES (ИНН: 781434518365)",
+                "FitSmile (ИНН: 246522599123)",
+                "ООО Торговый Дом (DEMO)"
+            ]
+
+            for i, supplier_name in enumerate(mock_suppliers):
+                supplier_id = db.add_supplier(
+                    user_id=user_id,
+                    name=supplier_name,
+                    token_id=token_id,
+                    is_default=(i == 0)
+                )
+                logger.info(f"[GET /suppliers] Created admin supplier_id={supplier_id}: {supplier_name}")
+
+            # Перезагружаем suppliers
+            suppliers = db.get_suppliers(user_id)
+            logger.info(f"[GET /suppliers] Created {len(suppliers)} MOCK suppliers for admin")
+
+        except Exception as e:
+            logger.error(f"[GET /suppliers] Error creating admin suppliers: {e}", exc_info=True)
+
     # Fallback для старых browser_sessions (миграция)
     # Если suppliers пуст, но есть активная browser_session - создаем supplier
-    if not suppliers:
+    if not suppliers and not is_admin:
         sessions = db.get_browser_sessions(user_id, active_only=True)
         logger.info(f"[GET /suppliers] Active browser_sessions: {len(sessions) if sessions else 0}")
         if sessions:
