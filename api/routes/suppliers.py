@@ -47,35 +47,53 @@ async def get_suppliers(
     автоматически создает хотя бы один supplier при первом запросе.
     """
     user_id = user['user_id']
+
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"[GET /suppliers] user_id={user_id}")
+
     suppliers = db.get_suppliers(user_id)
+    logger.info(f"[GET /suppliers] Existing suppliers: {len(suppliers)}")
 
     # Fallback для старых browser_sessions (миграция)
     # Если suppliers пуст, но есть активная browser_session - создаем supplier
     if not suppliers:
         sessions = db.get_browser_sessions(user_id, active_only=True)
+        logger.info(f"[GET /suppliers] Active browser_sessions: {len(sessions) if sessions else 0}")
         if sessions:
             # Берем первую активную сессию
             session = sessions[0]
             supplier_name = session.get('supplier_name') or f"Кабинет {session['phone'][-4:]}"
+            logger.info(f"[GET /suppliers] Creating supplier: {supplier_name}")
 
-            # Создаем фейковый токен для browser-based авторизации
-            token_id = db.add_wb_token(
-                user_id=user_id,
-                encrypted_token="browser_session",
-                name=f"Browser Session ({session['phone'][-4:]})"
-            )
+            try:
+                # Создаем фейковый токен для browser-based авторизации
+                token_id = db.add_wb_token(
+                    user_id=user_id,
+                    encrypted_token="browser_session",
+                    name=f"Browser Session ({session['phone'][-4:]})"
+                )
+                logger.info(f"[GET /suppliers] Created token_id={token_id}")
 
-            # Создаем supplier
-            db.add_supplier(
-                user_id=user_id,
-                name=supplier_name,
-                token_id=token_id,
-                is_default=True
-            )
+                # Создаем supplier
+                supplier_id = db.add_supplier(
+                    user_id=user_id,
+                    name=supplier_name,
+                    token_id=token_id,
+                    is_default=True
+                )
+                logger.info(f"[GET /suppliers] Created supplier_id={supplier_id}")
 
-            # Перезагружаем список suppliers
-            suppliers = db.get_suppliers(user_id)
+                # Перезагружаем список suppliers
+                suppliers = db.get_suppliers(user_id)
+                logger.info(f"[GET /suppliers] After creation: {len(suppliers)} suppliers")
+            except Exception as e:
+                logger.error(f"[GET /suppliers] Error creating supplier: {e}", exc_info=True)
+                raise
+        else:
+            logger.warning(f"[GET /suppliers] No active browser_sessions found for user {user_id}")
 
+    logger.info(f"[GET /suppliers] Returning {len(suppliers)} suppliers")
     return suppliers
 
 
