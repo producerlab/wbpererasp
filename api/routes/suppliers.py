@@ -42,9 +42,40 @@ async def get_suppliers(
 
     После SMS авторизации suppliers создаются автоматически из всех
     доступных профилей WB (мультиаккаунт поддерживается).
+
+    Для старых browser_sessions (до добавления парсинга профилей) -
+    автоматически создает хотя бы один supplier при первом запросе.
     """
     user_id = user['user_id']
     suppliers = db.get_suppliers(user_id)
+
+    # Fallback для старых browser_sessions (миграция)
+    # Если suppliers пуст, но есть активная browser_session - создаем supplier
+    if not suppliers:
+        sessions = db.get_browser_sessions(user_id, active_only=True)
+        if sessions:
+            # Берем первую активную сессию
+            session = sessions[0]
+            supplier_name = session.get('supplier_name') or f"Кабинет {session['phone'][-4:]}"
+
+            # Создаем фейковый токен для browser-based авторизации
+            token_id = db.add_wb_token(
+                user_id=user_id,
+                encrypted_token="browser_session",
+                name=f"Browser Session ({session['phone'][-4:]})"
+            )
+
+            # Создаем supplier
+            db.add_supplier(
+                user_id=user_id,
+                name=supplier_name,
+                token_id=token_id,
+                is_default=True
+            )
+
+            # Перезагружаем список suppliers
+            suppliers = db.get_suppliers(user_id)
+
     return suppliers
 
 
