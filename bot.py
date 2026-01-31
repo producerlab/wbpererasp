@@ -58,7 +58,54 @@ async def cmd_start(message: Message, state: FSMContext):
         )
         logger.info(f"[START] User {user_id} registered in DB")
 
-        # Проверяем, есть ли активная browser session
+        # Проверяем админа
+        is_admin = user_id in Config.ADMIN_IDS
+        if is_admin:
+            logger.info(f"[START] ADMIN user detected: {user_id}")
+
+        # Для админов сразу показываем Mini App (без проверки browser_session)
+        if is_admin:
+            webapp_url = Config.WEBAPP_URL
+            logger.info(f"[START] ADMIN mode - showing Mini App. WEBAPP_URL: {webapp_url}")
+
+            if webapp_url and webapp_url.startswith("https://"):
+                full_url = f"{webapp_url.rstrip('/')}/webapp/index.html"
+                keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(
+                        text="📦 Открыть Перераспределение",
+                        web_app=WebAppInfo(url=full_url)
+                    )],
+                    [InlineKeyboardButton(
+                        text="🔄 Войти заново",
+                        callback_data="reauth"
+                    )]
+                ])
+
+                await message.answer(
+                    f"👋 <b>Добро пожаловать, Администратор!</b>\n\n"
+                    f"✅ Вы работаете в <b>режиме администратора</b>\n\n"
+                    f"🎭 <b>DEMO режим:</b>\n"
+                    f"• Поставщики создаются автоматически (тестовые данные)\n"
+                    f"• SMS авторизация не требуется\n"
+                    f"• Доступны все функции панели\n\n"
+                    f"Нажмите кнопку ниже, чтобы открыть панель перераспределения:\n\n"
+                    f"<b>Команды:</b>\n"
+                    f"/balance - проверить баланс\n"
+                    f"/help - справка",
+                    reply_markup=keyboard,
+                    parse_mode=ParseMode.HTML
+                )
+                logger.info(f"[START] ADMIN {user_id} - sent admin message with Mini App")
+                return  # Выходим, не проверяем browser_session
+            else:
+                await message.answer(
+                    f"✅ Вы администратор, но WEBAPP_URL не настроен.\n\n"
+                    f"Проверьте конфигурацию WEBAPP_URL (должен начинаться с https://)"
+                )
+                logger.info(f"[START] ADMIN {user_id} - WEBAPP_URL not configured")
+                return
+
+        # Проверяем, есть ли активная browser session (только для обычных пользователей)
         session = db.get_browser_session(user_id)
         logger.info(f"[START] User {user_id} session: {bool(session)}")
 
