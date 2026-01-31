@@ -40,39 +40,11 @@ async def get_suppliers(
 
     Возвращает все связки ИП/ООО с токенами.
 
-    Если suppliers пуст, но есть активная browser_session (после SMS авторизации),
-    автоматически создаст supplier из browser_session.
+    После SMS авторизации suppliers создаются автоматически из всех
+    доступных профилей WB (мультиаккаунт поддерживается).
     """
     user_id = user['user_id']
     suppliers = db.get_suppliers(user_id)
-
-    # Если suppliers пуст - пробуем создать из browser_session
-    if not suppliers:
-        # Проверяем есть ли активная browser_session
-        sessions = db.get_browser_sessions(user_id, active_only=True)
-        if sessions:
-            # Берем первую активную сессию
-            session = sessions[0]
-            supplier_name = session.get('supplier_name') or f"Кабинет {session['phone'][-4:]}"
-
-            # Создаем фейковый токен для browser-based авторизации
-            token_id = db.add_wb_token(
-                user_id=user_id,
-                encrypted_token="browser_session",  # Фейковый токен
-                name=f"Browser Session ({session['phone'][-4:]})"
-            )
-
-            # Создаем supplier
-            supplier_id = db.add_supplier(
-                user_id=user_id,
-                name=supplier_name,
-                token_id=token_id,
-                is_default=True
-            )
-
-            # Перезагружаем список suppliers
-            suppliers = db.get_suppliers(user_id)
-
     return suppliers
 
 

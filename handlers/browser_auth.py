@@ -329,10 +329,50 @@ async def _handle_code_result(message: Message, state: FSMContext, session, phon
             supplier_name=session.supplier_name
         )
 
+        # Создаем suppliers для всех доступных профилей
+        suppliers_created = 0
+        if session.available_profiles:
+            logger.info(f"Создаем suppliers для {len(session.available_profiles)} профилей")
+
+            # Создаем фейковый токен для browser-based авторизации
+            token_id = db.add_wb_token(
+                user_id=user_id,
+                encrypted_token="browser_session",
+                name=f"Browser Session ({phone[-4:]})"
+            )
+
+            for i, profile in enumerate(session.available_profiles):
+                try:
+                    # Название supplier - имя профиля или компания
+                    supplier_name = profile.get('company') or profile.get('name') or f"Кабинет {phone[-4:]}"
+
+                    # Добавляем ИНН если есть
+                    if profile.get('inn'):
+                        supplier_name = f"{supplier_name} (ИНН: {profile['inn']})"
+
+                    db.add_supplier(
+                        user_id=user_id,
+                        name=supplier_name,
+                        token_id=token_id,
+                        is_default=(i == 0 or profile.get('is_active', False))  # Первый или активный = default
+                    )
+                    suppliers_created += 1
+                    logger.info(f"  ✅ Создан supplier: {supplier_name}")
+                except Exception as e:
+                    logger.error(f"Ошибка при создании supplier для профиля {profile}: {e}")
+
+            logger.info(f"Создано {suppliers_created} suppliers из {len(session.available_profiles)} профилей")
+
         await state.clear()
         await auth_service.close_session(user_id)
 
-        supplier_info = f"\n📛 Магазин: <b>{session.supplier_name}</b>" if session.supplier_name else ""
+        # Информация о профилях для сообщения
+        if suppliers_created > 1:
+            supplier_info = f"\n📛 Доступно кабинетов: <b>{suppliers_created}</b>"
+        elif session.supplier_name:
+            supplier_info = f"\n📛 Магазин: <b>{session.supplier_name}</b>"
+        else:
+            supplier_info = ""
 
         webapp_url = Config.WEBAPP_URL
         if webapp_url and webapp_url.startswith("https://"):

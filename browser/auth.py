@@ -51,6 +51,7 @@ class AuthSession:
     cookies: Optional[list] = None       # Cookies после успешной авторизации
     error_message: Optional[str] = None  # Сообщение об ошибке
     supplier_name: Optional[str] = None  # Название поставщика из ЛК
+    available_profiles: Optional[list] = None  # Список всех доступных профилей (для мультиаккаунта)
     captcha_screenshot: Optional[bytes] = None  # Скриншот captcha для отправки пользователю
     keep_alive_task: Optional[asyncio.Task] = None  # Background task для поддержания сессии
 
@@ -734,6 +735,14 @@ class WBAuthService:
                 session.status = AuthStatus.SUCCESS
                 session.cookies = await session.context.cookies()
                 session.supplier_name = await self._get_supplier_name(page)
+
+                # Получаем список всех доступных профилей (поставщиков)
+                session.available_profiles = await self._get_available_profiles(page)
+                if session.available_profiles:
+                    logger.info(f"Найдено {len(session.available_profiles)} доступных профилей для user {user_id}")
+                    for profile in session.available_profiles:
+                        logger.info(f"  - {profile.get('name')} (ИНН: {profile.get('inn')}, ID: {profile.get('id')})")
+
                 logger.info(f"Успешная авторизация для user {user_id}")
             else:
                 session.status = AuthStatus.FAILED
@@ -1569,6 +1578,143 @@ class WBAuthService:
             logger.debug(f"Не удалось получить имя поставщика: {e}")
 
         return None
+
+    async def _get_available_profiles(self, page: Page) -> Optional[list]:
+        """
+        Получить список всех доступных профилей (поставщиков) из WB.
+
+        После авторизации по номеру телефона, в правом верхнем углу есть dropdown
+        с переключателем профилей. Если пользователь добавлен как менеджер
+        в несколько кабинетов - они все будут доступны.
+
+        Returns:
+            Список словарей с данными профилей:
+            [
+                {
+                    'name': 'Хоснуллин Роман Аликович ИП',
+                    'company': 'EALY PERFUMES',
+                    'inn': '781434518365',
+                    'id': '64415',
+                    'is_active': True
+                },
+                ...
+            ]
+        """
+        try:
+            logger.info("Получаем список доступных профилей...")
+
+            # Селекторы для кнопки профиля в header (правый верхний угол)
+            profile_button_selectors = [
+                '[class*="profile"]',
+                '[class*="supplier"]',
+                '[class*="header"] [class*="name"]',
+                'button[class*="user"]',
+                '[data-test*="profile"]',
+            ]
+
+            # Ищем кнопку профиля
+            profile_button = None
+            for selector in profile_button_selectors:
+                try:
+                    elements = await page.query_selector_all(selector)
+                    # Ищем элемент в правом верхнем углу (высокий x, низкий y)
+                    for el in elements:
+                        box = await el.bounding_box()
+                        if box and box['x'] > page.viewport_size['width'] * 0.7 and box['y'] < 100:
+                            profile_button = el
+                            logger.info(f"Найдена кнопка профиля: {selector}")
+                            break
+                    if profile_button:
+                        break
+                except Exception:
+                    continue
+
+            if not profile_button:
+                logger.warning("Не найдена кнопка профиля - возможно изменился UI")
+                return None
+
+            # Кликаем на кнопку чтобы открыть панель профилей
+            await profile_button.click()
+            await asyncio.sleep(1)  # Ждем появления панели
+
+            # Парсим список профилей
+            profiles = []
+
+            # Селекторы для элементов списка профилей
+            profile_item_selectors = [
+                '[class*="profile"] [class*="item"]',
+                '[class*="supplier"] [class*="item"]',
+                'div[class*="dropdown"] > div',
+            ]
+
+            profile_items = []
+            for selector in profile_item_selectors:
+                try:
+                    items = await page.query_selector_all(selector)
+                    if items and len(items) > 1:  # Должно быть несколько профилей
+                        profile_items = items
+                        logger.info(f"Найдено {len(items)} элементов профилей: {selector}")
+                        break
+                except Exception:
+                    continue
+
+            if not profile_items:
+                logger.warning("Не найдены элементы списка профилей")
+                return None
+
+            # Парсим каждый профиль
+            for item in profile_items:
+                try:
+                    text = await item.inner_text()
+                    if not text or len(text) < 5:
+                        continue
+
+                    # Ищем ИНН (12-13 цифр)
+                    import re
+                    inn_match = re.search(r'ИНН\s*(\d{10,13})', text, re.IGNORECASE)
+                    id_match = re.search(r'ID\s*(\d+)', text, re.IGNORECASE)
+
+                    # Извлекаем название (первая строка обычно)
+                    lines = [line.strip() for line in text.split('\n') if line.strip()]
+                    name = lines[0] if lines else ''
+
+                    # Ищем название компании (обычно второе поле)
+                    company = lines[1] if len(lines) > 1 and not inn_match else ''
+
+                    # Проверяем активен ли этот профиль (есть ли галочка/выделение)
+                    is_active = False
+                    try:
+                        # Проверяем наличие активного маркера
+                        active_marker = await item.query_selector('[class*="active"], [class*="selected"], svg')
+                        is_active = active_marker is not None
+                    except Exception:
+                        pass
+
+                    profile = {
+                        'name': name,
+                        'company': company if company and company != name else '',
+                        'inn': inn_match.group(1) if inn_match else '',
+                        'id': id_match.group(1) if id_match else '',
+                        'is_active': is_active
+                    }
+
+                    if profile['name']:  # Добавляем только если есть название
+                        profiles.append(profile)
+                        logger.debug(f"Найден профиль: {profile}")
+
+                except Exception as e:
+                    logger.debug(f"Ошибка при парсинге профиля: {e}")
+                    continue
+
+            # Закрываем панель (клик вне или Escape)
+            await page.keyboard.press('Escape')
+
+            logger.info(f"Успешно получено {len(profiles)} профилей")
+            return profiles if profiles else None
+
+        except Exception as e:
+            logger.warning(f"Ошибка при получении профилей: {e}")
+            return None
 
     async def _keep_session_alive(self, user_id: int, page: Page) -> None:
         """
