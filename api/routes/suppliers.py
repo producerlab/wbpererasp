@@ -4,7 +4,8 @@ API для управления поставщиками (мультиаккау
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
-from typing import List, Dict
+from typing import List, Dict, Any
+from datetime import datetime
 
 from database import Database
 from api.main import get_current_user, get_db
@@ -28,7 +29,10 @@ class SupplierResponse(BaseModel):
     token_id: int
     token_name: str
     is_default: int
-    created_at: str
+    created_at: Any  # datetime from PostgreSQL, str from SQLite
+
+    class Config:
+        from_attributes = True
 
 
 @router.get("/suppliers", response_model=List[SupplierResponse])
