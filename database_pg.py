@@ -357,6 +357,11 @@ class DatabasePostgres:
         """Получает активную браузерную сессию"""
         with self._get_connection() as conn:
             cursor = conn.cursor()
+            # Сначала проверим, есть ли вообще сессии для этого пользователя
+            cursor.execute('SELECT COUNT(*) as cnt FROM browser_sessions WHERE user_id = %s', (user_id,))
+            total = cursor.fetchone()['cnt']
+            logger.info(f"[DB] get_browser_session: user_id={user_id}, total_sessions={total}")
+
             cursor.execute('''
                 SELECT * FROM browser_sessions
                 WHERE user_id = %s AND status = 'active'
@@ -365,6 +370,7 @@ class DatabasePostgres:
                 LIMIT 1
             ''', (user_id,))
             row = cursor.fetchone()
+            logger.info(f"[DB] get_browser_session: found={row is not None}")
             return dict(row) if row else None
 
     def get_browser_sessions(self, user_id: int, active_only: bool = True) -> List[Dict]:
