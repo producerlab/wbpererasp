@@ -1752,6 +1752,25 @@ class WBAuthService:
                         'is_active': is_active
                     }
 
+                    # Фильтруем пункты меню WB - это НЕ поставщики
+                    menu_items = [
+                        'досудебные претензии', 'обращения правообладателей',
+                        'справочный центр', 'поддержка', 'настройки',
+                        'выход', 'выйти', 'помощь', 'help', 'support',
+                        'уведомления', 'notifications', 'профиль', 'profile'
+                    ]
+                    name_lower = name.lower()
+
+                    # Пропускаем если это пункт меню
+                    if any(menu in name_lower for menu in menu_items):
+                        logger.debug(f"Пропускаем пункт меню: {name}")
+                        continue
+
+                    # Пропускаем если название слишком короткое или это число (99+)
+                    if len(name) < 3 or name.replace('+', '').isdigit():
+                        logger.debug(f"Пропускаем короткое/числовое: {name}")
+                        continue
+
                     if profile['name']:  # Добавляем только если есть название
                         profiles.append(profile)
                         logger.debug(f"Найден профиль: {profile}")
