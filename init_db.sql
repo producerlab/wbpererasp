@@ -59,6 +59,21 @@ CREATE TABLE IF NOT EXISTS redistribution_requests (
 );
 
 -- ========================================
+-- Браузерные сессии (для авторизации через SMS)
+-- ========================================
+CREATE TABLE IF NOT EXISTS browser_sessions (
+    id SERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
+    phone VARCHAR(20) NOT NULL,
+    cookies_encrypted TEXT,
+    supplier_name VARCHAR(255),
+    status VARCHAR(20) DEFAULT 'active',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_used_at TIMESTAMP,
+    expires_at TIMESTAMP
+);
+
+-- ========================================
 -- Индексы для производительности
 -- ========================================
 CREATE INDEX IF NOT EXISTS idx_users_telegram_id ON users(telegram_id);
@@ -66,3 +81,4 @@ CREATE INDEX IF NOT EXISTS idx_tokens_user_id ON wb_api_tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_suppliers_user_id ON suppliers(user_id);
 CREATE INDEX IF NOT EXISTS idx_requests_user_id ON redistribution_requests(user_id);
 CREATE INDEX IF NOT EXISTS idx_requests_status ON redistribution_requests(status);
+CREATE INDEX IF NOT EXISTS idx_browser_sessions_user ON browser_sessions(user_id, status);

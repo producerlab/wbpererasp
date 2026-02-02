@@ -68,6 +68,37 @@ class DatabasePostgres:
                         sql_script = f.read()
                     cursor.execute(sql_script)
                     logger.info("Schema initialized")
+
+                # Проверяем есть ли таблица browser_sessions (добавлена позже)
+                cursor.execute("""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables
+                        WHERE table_name = 'browser_sessions'
+                    )
+                """)
+                bs_exists = cursor.fetchone()['exists']
+
+                if not bs_exists:
+                    logger.info("Creating browser_sessions table...")
+                    cursor.execute('''
+                        CREATE TABLE IF NOT EXISTS browser_sessions (
+                            id SERIAL PRIMARY KEY,
+                            user_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
+                            phone VARCHAR(20) NOT NULL,
+                            cookies_encrypted TEXT,
+                            supplier_name VARCHAR(255),
+                            status VARCHAR(20) DEFAULT 'active',
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            last_used_at TIMESTAMP,
+                            expires_at TIMESTAMP
+                        )
+                    ''')
+                    cursor.execute('''
+                        CREATE INDEX IF NOT EXISTS idx_browser_sessions_user
+                        ON browser_sessions(user_id, status)
+                    ''')
+                    logger.info("browser_sessions table created")
+
         except Exception as e:
             logger.error(f"Failed to ensure schema: {e}")
             raise
@@ -285,3 +316,82 @@ class DatabasePostgres:
                 'total_users': users_count,
                 'total_requests': requests_count
             }
+
+    # ==================== BROWSER SESSIONS ====================
+
+    def add_browser_session(
+        self,
+        user_id: int,
+        phone: str,
+        cookies_encrypted: str,
+        supplier_name: str = None,
+        expires_days: int = 30
+    ) -> int:
+        """Добавляет браузерную сессию"""
+        from datetime import datetime, timedelta
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Деактивируем старые сессии
+            cursor.execute('''
+                UPDATE browser_sessions
+                SET status = 'inactive'
+                WHERE user_id = %s AND status = 'active'
+            ''', (user_id,))
+
+            # Создаем новую
+            expires_at = datetime.now() + timedelta(days=expires_days)
+            cursor.execute('''
+                INSERT INTO browser_sessions (
+                    user_id, phone, cookies_encrypted, supplier_name,
+                    status, last_used_at, expires_at
+                )
+                VALUES (%s, %s, %s, %s, 'active', CURRENT_TIMESTAMP, %s)
+                RETURNING id
+            ''', (user_id, phone, cookies_encrypted, supplier_name, expires_at))
+
+            return cursor.fetchone()['id']
+
+    def get_browser_session(self, user_id: int) -> Optional[Dict]:
+        """Получает активную браузерную сессию"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT * FROM browser_sessions
+                WHERE user_id = %s AND status = 'active'
+                AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
+                ORDER BY created_at DESC
+                LIMIT 1
+            ''', (user_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_browser_sessions(self, user_id: int, active_only: bool = True) -> List[Dict]:
+        """Получает все сессии пользователя"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            if active_only:
+                cursor.execute('''
+                    SELECT * FROM browser_sessions
+                    WHERE user_id = %s AND status = 'active'
+                    ORDER BY created_at DESC
+                ''', (user_id,))
+            else:
+                cursor.execute('''
+                    SELECT * FROM browser_sessions
+                    WHERE user_id = %s
+                    ORDER BY created_at DESC
+                ''', (user_id,))
+            return [dict(row) for row in cursor.fetchall()]
+
+    def update_browser_session_status(self, session_id: int, status: str) -> bool:
+        """Обновляет статус сессии"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE browser_sessions
+                SET status = %s
+                WHERE id = %s
+            ''', (status, session_id))
+            return cursor.rowcount > 0

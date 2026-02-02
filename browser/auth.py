@@ -716,6 +716,9 @@ class WBAuthService:
             # Ждём результат
             await browser.human_delay(3000, 5000)
 
+            # Закрываем промо-попапы (Джем, подписки и т.д.)
+            await self._close_promo_popups(page)
+
             # Проверяем ошибки
             error = await self._check_error(page)
             if error:
@@ -1402,6 +1405,51 @@ class WBAuthService:
             logger.error(f"Ошибка при поиске кнопки: {e}")
             return None
 
+    async def _close_promo_popups(self, page: Page) -> None:
+        """Закрыть промо-попапы (Джем, подписки и т.д.)"""
+        try:
+            # Селекторы для кнопок закрытия попапов
+            close_selectors = [
+                '[class*="modal"] [class*="close"]',
+                '[class*="popup"] [class*="close"]',
+                '[class*="dialog"] [class*="close"]',
+                '[class*="Modal"] button[class*="close"]',
+                '[class*="Modal"] [class*="Close"]',
+                'button[aria-label="Close"]',
+                'button[aria-label="Закрыть"]',
+                '[class*="overlay"] [class*="close"]',
+                # Кнопки "Не сейчас", "Пропустить" и т.д.
+                'button:has-text("Не сейчас")',
+                'button:has-text("Пропустить")',
+                'button:has-text("Позже")',
+                'button:has-text("Нет, спасибо")',
+                'button:has-text("Отмена")',
+                # Крестик в углу
+                '[class*="modal"] svg',
+                '[class*="popup"] svg[class*="close"]',
+            ]
+
+            for selector in close_selectors:
+                try:
+                    element = await page.query_selector(selector)
+                    if element and await element.is_visible():
+                        await element.click()
+                        logger.info(f"Закрыт промо-попап через: {selector}")
+                        await asyncio.sleep(0.5)
+                        return
+                except Exception:
+                    continue
+
+            # Попробуем нажать Escape
+            try:
+                await page.keyboard.press('Escape')
+                await asyncio.sleep(0.3)
+            except Exception:
+                pass
+
+        except Exception as e:
+            logger.debug(f"Ошибка при закрытии попапов: {e}")
+
     async def _check_error(self, page: Page) -> Optional[str]:
         """Проверить наличие ошибки на странице"""
         try:
@@ -1459,6 +1507,12 @@ class WBAuthService:
                 text = await error_element.inner_text()
                 # Фильтруем слишком короткие или бессмысленные сообщения
                 if text and len(text) > 5 and not text.startswith('+'):
+                    # Игнорируем промо-попапы (не ошибки)
+                    promo_keywords = ['джем', 'подписка', 'скидка', 'акция', 'бонус', 'premium', 'pro']
+                    text_lower = text.lower()
+                    if any(kw in text_lower for kw in promo_keywords):
+                        logger.debug(f"Игнорируем промо-сообщение: {text[:50]}...")
+                        return None
                     return text.strip()
 
         except Exception as e:
