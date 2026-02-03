@@ -714,8 +714,18 @@ class WBRedistributionService:
                 logger.error(f"Session expired - redirected to login: {current_url}")
                 return []
 
-            # Ждём загрузки данных
-            await browser.human_delay(5000, 7000)  # Даём больше времени на загрузку API
+            # Ждём загрузки данных - даём больше времени
+            await browser.human_delay(3000, 4000)
+
+            # Пробуем прокрутить страницу чтобы триггернуть загрузку данных
+            try:
+                await page.evaluate('window.scrollTo(0, 500)')
+                await browser.human_delay(2000, 3000)
+            except:
+                pass
+
+            # Ещё немного ждём
+            await browser.human_delay(3000, 4000)
 
             logger.info(f"After delay, captured {len(captured_data)} APIs")
 
@@ -741,14 +751,22 @@ class WBRedistributionService:
                 if 'balances' not in url and 'remains' not in url and 'stocks' not in url:
                     continue
 
+                logger.info(f"🔍 Checking balances/remains/stocks URL: {url[:80]}")
+
                 if isinstance(data, list) and len(data) > 0:
                     logger.info(f"✅ Found stock data in list from {url[:60]}")
                     return data
                 elif isinstance(data, dict):
                     for key in ['data', 'items', 'result', 'rows', 'content', 'report', 'balances']:
-                        if key in data and isinstance(data[key], list) and len(data[key]) > 0:
-                            logger.info(f"✅ Found stock data in '{key}' from {url[:60]}")
-                            return data[key]
+                        if key in data:
+                            val = data[key]
+                            if isinstance(val, list):
+                                logger.info(f"  Key '{key}' contains list with {len(val)} items")
+                                if len(val) > 0:
+                                    logger.info(f"✅ Found stock data in '{key}' from {url[:60]}")
+                                    return val
+                            elif isinstance(val, dict):
+                                logger.info(f"  Key '{key}' contains dict with keys: {list(val.keys())[:5]}")
 
             # Fallback: любые данные с nmId
             for item in captured_data:
