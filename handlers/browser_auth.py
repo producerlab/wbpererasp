@@ -329,6 +329,16 @@ async def _handle_code_result(message: Message, state: FSMContext, session, phon
             supplier_name=session.supplier_name
         )
 
+        # Удаляем старых suppliers перед созданием новых
+        old_suppliers = db.get_suppliers(user_id)
+        if old_suppliers:
+            logger.info(f"Удаляем {len(old_suppliers)} старых suppliers для user {user_id}")
+            for old_sup in old_suppliers:
+                try:
+                    db.delete_supplier(old_sup['id'])
+                except Exception as e:
+                    logger.warning(f"Не удалось удалить supplier {old_sup['id']}: {e}")
+
         # Создаем suppliers для всех доступных профилей
         suppliers_created = 0
         if session.available_profiles:
