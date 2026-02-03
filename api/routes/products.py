@@ -1,16 +1,18 @@
 """
 API для поиска товаров WB по артикулу.
+
+Использует внутренний API WB с cookies браузерной сессии.
 """
 
+import logging
 from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Dict, Optional
 
 from database import Database
-from wb_api.client import WBApiClient
-from wb_api.stocks import StocksAPI
+from wb_api.internal_client import WBInternalClient
 from api.main import get_current_user, get_db
-from utils.encryption import decrypt_token
 
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -25,73 +27,77 @@ async def search_product(
     """
     Поиск товара по артикулу WB.
 
-    Возвращает информацию о товаре и его остатках.
+    Использует cookies браузерной сессии для доступа к внутреннему API WB.
     """
     user_id = user['user_id']
 
-    # Получаем токен
-    if supplier_id:
-        supplier = db.get_supplier(supplier_id)
-        if not supplier or supplier['user_id'] != user_id:
-            raise HTTPException(status_code=404, detail="Supplier not found")
-        token = db.get_wb_token(user_id, supplier['token_id'])
-    else:
-        token = db.get_wb_token(user_id)
+    # Получаем браузерную сессию с cookies
+    session = db.get_browser_session(user_id)
+    if not session:
+        raise HTTPException(
+            status_code=401,
+            detail="Browser session not found. Please authenticate via /auth"
+        )
 
-    if not token:
-        raise HTTPException(status_code=404, detail="WB API token not found")
-
-    # Расшифровываем токен
-    decrypted_token = decrypt_token(token['encrypted_token'])
+    cookies_encrypted = session.get('cookies_encrypted')
+    if not cookies_encrypted:
+        raise HTTPException(
+            status_code=401,
+            detail="No cookies in session. Please re-authenticate via /auth"
+        )
 
     try:
-        # Ищем товар
-        async with WBApiClient(decrypted_token) as client:
-            api = StocksAPI(client)
+        nm_id = int(q)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid article number. Please enter a valid WB nmId"
+        )
 
-            # Пытаемся преобразовать в число
-            try:
-                nm_id = int(q)
-            except ValueError:
-                # Если не число - ищем по артикулу продавца
-                product = await api.search_product_by_sku(q)
-                if not product:
-                    return {"found": False, "message": "Product not found"}
-                nm_id = product.nm_id
+    try:
+        async with WBInternalClient(cookies_encrypted) as client:
+            # Получаем остатки товара
+            logger.info(f"Searching for product {nm_id}")
 
-            # Получаем остатки
-            stocks = await api.get_stocks_for_sku(str(nm_id))
+            # Сначала попробуем получить все остатки
+            remains = await client.get_warehouse_remains()
+            logger.info(f"Got {len(remains)} items from warehouse remains")
 
-            if not stocks:
+            # Ищем наш товар
+            product_stocks = []
+            product_name = None
+
+            for item in remains:
+                item_nm = item.get('nmId') or item.get('nm_id') or item.get('nmID')
+                if item_nm == nm_id:
+                    product_name = item.get('name') or item.get('subject') or item.get('productName')
+                    product_stocks.append({
+                        "warehouse_id": item.get('warehouseId') or item.get('warehouse_id'),
+                        "warehouse_name": item.get('warehouseName') or item.get('warehouse_name') or 'Unknown',
+                        "quantity": item.get('quantity') or item.get('qty') or 0,
+                        "available": item.get('available') or item.get('quantity') or 0
+                    })
+
+            if not product_stocks:
+                # Товар не найден в остатках - возможно его нет на складах
                 return {
-                    "found": True,
+                    "found": False,
                     "nm_id": nm_id,
-                    "product_name": None,
-                    "total_quantity": 0,
-                    "warehouses": []
+                    "message": "Product not found in warehouse remains"
                 }
 
-            # Формируем ответ
-            total_quantity = sum(s.quantity for s in stocks)
-            warehouses = [
-                {
-                    "warehouse_id": s.warehouse_id,
-                    "warehouse_name": s.warehouse_name,
-                    "quantity": s.quantity,
-                    "available": s.available
-                }
-                for s in stocks
-            ]
+            total_quantity = sum(s['quantity'] for s in product_stocks)
 
             return {
                 "found": True,
                 "nm_id": nm_id,
-                "product_name": stocks[0].product_name if stocks else None,
+                "product_name": product_name,
                 "total_quantity": total_quantity,
-                "warehouses": warehouses
+                "warehouses": product_stocks
             }
 
     except Exception as e:
+        logger.error(f"Error searching product {nm_id}: {e}")
         raise HTTPException(
             status_code=500,
             detail=f"Failed to search product: {str(e)}"
