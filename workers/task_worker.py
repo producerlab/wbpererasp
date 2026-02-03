@@ -5,7 +5,6 @@ Worker для обработки задач перемещения из очер
 - Получение задач из Redis очереди
 - Выполнение перемещений через браузер
 - Отправка уведомлений о результате
-- Списание/возврат средств
 """
 
 import asyncio
@@ -14,7 +13,6 @@ from typing import Optional, Callable, Awaitable
 
 from .queue import TaskQueue, Task, TaskStatus, get_task_queue
 from browser.redistribution import WBRedistributionService, RedistributionStatus, get_redistribution_service
-from payments.balance import BalanceService, get_balance_service
 from db_factory import get_database
 
 logger = logging.getLogger(__name__)
@@ -44,7 +42,6 @@ class TaskWorker:
         self._running = False
         self._task_queue: Optional[TaskQueue] = None
         self._redistribution_service: Optional[WBRedistributionService] = None
-        self._balance_service: Optional[BalanceService] = None
 
     async def start(self) -> None:
         """Запуск воркера"""
@@ -52,7 +49,6 @@ class TaskWorker:
 
         self._task_queue = await get_task_queue()
         self._redistribution_service = get_redistribution_service()
-        self._balance_service = get_balance_service()
 
         if not self._task_queue.is_connected:
             logger.error("Redis not connected, worker cannot start")
@@ -117,17 +113,6 @@ class TaskWorker:
                 await self._complete_task(task, False, "Cookies не найдены")
                 return
 
-            # Проверяем баланс перед выполнением
-            balance_info = self._balance_service.get_balance(task.user_id)
-            if not balance_info.can_redistribute:
-                await self._complete_task(task, False, "Недостаточно средств. Пополните баланс: /pay")
-                return
-
-            # Списываем средства
-            if not self._balance_service.charge_for_redistribution(task.user_id):
-                await self._complete_task(task, False, "Не удалось списать средства")
-                return
-
             # Выполняем перемещение
             result = await self._redistribution_service.execute_redistribution(
                 cookies_encrypted=cookies_encrypted,
@@ -154,18 +139,16 @@ class TaskWorker:
                 )
 
             elif result.status == RedistributionStatus.NO_QUOTA:
-                # Нет квоты - возвращаем деньги и ставим в очередь повторно
-                self._balance_service.refund_redistribution(task.user_id)
+                # Нет квоты - ставим в очередь повторно
                 await self._complete_task(
                     task,
                     success=False,
-                    error_message=f"Нет квоты. Задача вернётся в очередь при появлении слотов."
+                    error_message="Нет квоты. Задача вернётся в очередь при появлении слотов."
                 )
 
             elif result.status == RedistributionStatus.SESSION_EXPIRED:
-                # Сессия истекла - деактивируем и возвращаем деньги
+                # Сессия истекла - деактивируем
                 db.deactivate_browser_session(task.session_id)
-                self._balance_service.refund_redistribution(task.user_id)
                 await self._complete_task(
                     task,
                     success=False,
@@ -174,7 +157,6 @@ class TaskWorker:
 
             else:
                 # Другая ошибка
-                self._balance_service.refund_redistribution(task.user_id)
                 await self._complete_task(
                     task,
                     success=False,
@@ -183,11 +165,6 @@ class TaskWorker:
 
         except Exception as e:
             logger.error(f"Error processing task {task.id}: {e}", exc_info=True)
-            # Возвращаем деньги при ошибке
-            try:
-                self._balance_service.refund_redistribution(task.user_id)
-            except Exception:
-                pass
             await self._complete_task(task, False, f"Внутренняя ошибка: {str(e)}")
 
     async def _complete_task(

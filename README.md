@@ -151,12 +151,13 @@ wbpereraspr/
 │       └── app.js
 │
 ├── handlers/              # Telegram handlers
-│   ├── token_management.py
-│   ├── supplier_management.py
-│   └── redistribution.py
+│   ├── browser_auth.py    # SMS авторизация
+│   └── redistribution.py  # Перераспределение
 │
-├── services/              # Бизнес-логика
-│   └── redistribution_service.py
+├── browser/               # Browser automation
+│   ├── auth.py            # WB авторизация
+│   ├── browser_service.py # Playwright сервис
+│   └── redistribution.py  # Перемещение через браузер
 │
 ├── wb_api/                # WB API клиенты
 │   ├── client.py          # HTTP клиент с rate limiting
