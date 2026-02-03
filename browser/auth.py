@@ -1724,15 +1724,72 @@ class WBAuthService:
                 await asyncio.sleep(1.5)
 
             # Ждём появления dropdown панели
-            await browser.human_delay(500, 800)
+            await browser.human_delay(800, 1200)
 
-            # Теперь ищем элементы с ИНН - это ТОЧНО профили поставщиков
+            # Делаем скриншот для отладки
+            try:
+                screenshot_path = '/tmp/wb_dropdown_debug.png'
+                await page.screenshot(path=screenshot_path)
+                logger.info(f"Скриншот сохранён: {screenshot_path}")
+            except Exception as e:
+                logger.debug(f"Не удалось сохранить скриншот: {e}")
+
             profiles = []
 
-            # Получаем весь текст страницы и ищем блоки с ИНН
-            # Ищем все div/span элементы которые содержат "ИНН"
-            all_elements = await page.query_selector_all('div, span, li, a')
-            logger.info(f"Найдено {len(all_elements)} элементов для анализа")
+            # Ищем dropdown контейнер - обычно это popup/dropdown который появился после hover
+            dropdown_selectors = [
+                '[class*="dropdown"]',
+                '[class*="Dropdown"]',
+                '[class*="popup"]',
+                '[class*="Popup"]',
+                '[class*="popover"]',
+                '[class*="Popover"]',
+                '[class*="menu"][class*="profile"]',
+                '[class*="Menu"][class*="Profile"]',
+                '[class*="account"][class*="switch"]',
+                '[class*="Switch"][class*="Account"]',
+                '[role="menu"]',
+                '[role="listbox"]',
+            ]
+
+            dropdown_container = None
+            for selector in dropdown_selectors:
+                try:
+                    elements = await page.query_selector_all(selector)
+                    for el in elements:
+                        # Проверяем, что элемент видим (появился после hover)
+                        is_visible = await el.is_visible()
+                        if is_visible:
+                            box = await el.bounding_box()
+                            if box and box['height'] > 100:  # Dropdown должен быть достаточно большой
+                                dropdown_container = el
+                                logger.info(f"Найден dropdown контейнер: {selector}, размер: {box['width']}x{box['height']}")
+                                break
+                    if dropdown_container:
+                        break
+                except Exception:
+                    continue
+
+            # Если нашли dropdown - ищем профили только в нём
+            if dropdown_container:
+                all_elements = await dropdown_container.query_selector_all('div, span, li, a')
+                logger.info(f"Найдено {len(all_elements)} элементов в dropdown")
+            else:
+                # Fallback: ищем по всей странице, но только в правой части
+                logger.warning("Dropdown контейнер не найден, ищем по всей странице справа")
+                all_elements = await page.query_selector_all('div, span, li, a')
+                # Фильтруем только правую часть страницы (x > 50% ширины)
+                filtered_elements = []
+                viewport = page.viewport_size
+                for el in all_elements:
+                    try:
+                        box = await el.bounding_box()
+                        if box and box['x'] > viewport['width'] * 0.5:
+                            filtered_elements.append(el)
+                    except:
+                        continue
+                all_elements = filtered_elements
+                logger.info(f"После фильтрации: {len(all_elements)} элементов справа")
 
             seen_inns = set()  # Для дедупликации
 
