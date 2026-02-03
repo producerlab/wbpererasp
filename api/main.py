@@ -89,14 +89,13 @@ async def health_check():
 
 
 # Подключаем роутеры
-from api.routes import suppliers, products, stocks, warehouses, requests, payments
+from api.routes import suppliers, products, stocks, warehouses, requests
 
 app.include_router(suppliers.router, prefix="/api", tags=["suppliers"])
 app.include_router(products.router, prefix="/api", tags=["products"])
 app.include_router(stocks.router, prefix="/api", tags=["stocks"])
 app.include_router(warehouses.router, prefix="/api", tags=["warehouses"])
 app.include_router(requests.router, prefix="/api", tags=["requests"])
-app.include_router(payments.router, prefix="/api", tags=["payments"])
 
 
 if __name__ == "__main__":
