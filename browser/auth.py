@@ -1657,8 +1657,28 @@ class WBAuthService:
         try:
             logger.info("Получаем список доступных профилей...")
             import re
+            import json
 
             browser = await self._get_browser()
+
+            # Логируем ВСЕ network запросы чтобы найти API профилей
+            captured_api_data = []
+
+            async def log_response(response):
+                """Логируем все API ответы"""
+                try:
+                    url = response.url
+                    if response.status == 200 and 'api' in url.lower():
+                        try:
+                            body = await response.json()
+                            logger.info(f"📡 API: {url}")
+                            captured_api_data.append({'url': url, 'data': body})
+                        except:
+                            pass
+                except:
+                    pass
+
+            page.on('response', log_response)
 
             # Ищем кнопку профиля в правом верхнем углу по тексту
             # WB показывает имя пользователя в header
@@ -1864,7 +1884,23 @@ class WBAuthService:
             await page.keyboard.press('Escape')
             await browser.human_delay(200, 300)
 
-            logger.info(f"Успешно получено {len(profiles)} профилей")
+            # Отписываемся от events
+            try:
+                page.remove_listener('response', log_response)
+            except:
+                pass
+
+            # Логируем все перехваченные API для анализа
+            if captured_api_data:
+                logger.info(f"📊 Перехвачено {len(captured_api_data)} API ответов:")
+                for item in captured_api_data:
+                    logger.info(f"  URL: {item['url']}")
+                    data_str = json.dumps(item['data'], ensure_ascii=False)
+                    if len(data_str) > 300:
+                        data_str = data_str[:300] + "..."
+                    logger.info(f"  Data: {data_str}")
+
+            logger.info(f"Успешно получено {len(profiles)} профилей из UI")
             return profiles if profiles else None
 
         except Exception as e:
