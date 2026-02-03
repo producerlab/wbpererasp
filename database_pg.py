@@ -356,7 +356,7 @@ class DatabasePostgres:
                 )
                 VALUES (%s, %s, %s, %s, %s, %s, %s, 'active', CURRENT_TIMESTAMP, %s)
                 RETURNING id
-            ''', (user_id, None, phone_encrypted, phone_hash, phone_last4,
+            ''', (user_id, phone, phone_encrypted, phone_hash, phone_last4,
                   cookies_encrypted, supplier_name, expires_at))
 
             return cursor.fetchone()['id']
