@@ -871,3 +871,127 @@ async def cmd_cancel(message: Message, state: FSMContext):
         "Авторизация отменена.\n\n"
         "Для новой попытки: /auth"
     )
+
+
+# ==================== Обновление профилей ====================
+
+@router.callback_query(F.data == "refresh_profiles")
+async def callback_refresh_profiles(callback: CallbackQuery):
+    """
+    Обновить названия поставщиков (перепарсить профили из WB).
+    Использует существующие cookies без повторной авторизации.
+    """
+    import json
+    user_id = callback.from_user.id
+    db = get_db()
+
+    await callback.answer("Обновляю профили...")
+
+    # Получаем активную browser_session
+    sessions = db.get_browser_sessions(user_id, active_only=True)
+    if not sessions:
+        await callback.message.answer(
+            "❌ Нет активной сессии.\n\n"
+            "Сначала авторизуйтесь: /auth"
+        )
+        return
+
+    session = sessions[0]
+    cookies_encrypted = session.get('cookies_encrypted')
+
+    if not cookies_encrypted:
+        await callback.message.answer(
+            "❌ Cookies не найдены.\n\n"
+            "Переавторизуйтесь: /auth"
+        )
+        return
+
+    try:
+        # Расшифровываем cookies
+        cookies_json = decrypt_token(cookies_encrypted)
+        cookies = json.loads(cookies_json)
+
+        if not cookies:
+            await callback.message.answer(
+                "❌ Пустые cookies.\n\n"
+                "Переавторизуйтесь: /auth"
+            )
+            return
+
+        # Отправляем сообщение о начале процесса
+        status_msg = await callback.message.answer(
+            "⏳ <b>Обновляю профили...</b>\n\n"
+            "Это займёт несколько секунд.",
+            parse_mode="HTML"
+        )
+
+        # Парсим профили
+        auth_service = get_auth_service()
+        profiles = await auth_service.refresh_profiles_with_cookies(cookies)
+
+        if not profiles:
+            await status_msg.edit_text(
+                "⚠️ Не удалось получить профили из WB.\n\n"
+                "Возможно, сессия истекла. Переавторизуйтесь: /auth"
+            )
+            return
+
+        logger.info(f"Получено {len(profiles)} профилей для user {user_id}")
+
+        # Получаем текущих suppliers
+        suppliers = db.get_suppliers(user_id)
+
+        # Обновляем suppliers по ИНН
+        import re
+        updated = 0
+        for supplier in suppliers:
+            supplier_id = supplier['id']
+            old_name = supplier['name']
+
+            # Извлекаем ИНН
+            inn_match = re.search(r'ИНН:\s*(\d{10,13})', old_name)
+            if not inn_match:
+                continue
+
+            inn = inn_match.group(1)
+
+            # Ищем профиль с таким ИНН
+            matching_profile = None
+            for profile in profiles:
+                if profile.get('inn') == inn:
+                    matching_profile = profile
+                    break
+
+            if not matching_profile:
+                continue
+
+            # Формируем новое название (ФИО приоритет)
+            new_base_name = matching_profile.get('name') or matching_profile.get('company')
+            new_name = f"{new_base_name} (ИНН: {inn})"
+
+            if new_name == old_name:
+                continue
+
+            # Обновляем
+            db.update_supplier_name(supplier_id, new_name)
+            logger.info(f"  ✅ Supplier {supplier_id}: '{old_name}' -> '{new_name}'")
+            updated += 1
+
+        if updated > 0:
+            await status_msg.edit_text(
+                f"✅ <b>Профили обновлены!</b>\n\n"
+                f"Обновлено поставщиков: {updated}\n\n"
+                f"Теперь вместо названий магазинов отображаются ФИО владельцев.",
+                parse_mode="HTML"
+            )
+        else:
+            await status_msg.edit_text(
+                "✅ Профили актуальны, обновление не требуется."
+            )
+
+    except Exception as e:
+        logger.error(f"Ошибка обновления профилей для user {user_id}: {e}")
+        await callback.message.answer(
+            f"❌ Ошибка: {str(e)}\n\n"
+            "Попробуйте переавторизоваться: /auth"
+        )

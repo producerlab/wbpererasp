@@ -2003,6 +2003,81 @@ class WBAuthService:
             return await browser.take_screenshot(session.page)
         return None
 
+    async def refresh_profiles_with_cookies(self, cookies: list) -> list:
+        """
+        Перепарсить профили из WB используя существующие cookies.
+
+        Args:
+            cookies: Список cookies из browser_session
+
+        Returns:
+            Список профилей [{name, company, inn, id}, ...]
+        """
+        from playwright.async_api import async_playwright
+
+        profiles = []
+
+        try:
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=True)
+                context = await browser.new_context(
+                    viewport={'width': 1920, 'height': 1080},
+                    user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                )
+
+                # Устанавливаем cookies
+                await context.add_cookies(cookies)
+
+                page = await context.new_page()
+
+                try:
+                    # Переходим в seller.wildberries.ru
+                    await page.goto('https://seller.wildberries.ru/', wait_until='networkidle', timeout=30000)
+                    await asyncio.sleep(2)
+
+                    # Ищем dropdown с профилями (верхний правый угол)
+                    profile_selectors = [
+                        '[class*="Profile"]',
+                        '[class*="profile"]',
+                        '[class*="Account"]',
+                        '[class*="account"]',
+                        '[class*="User"]',
+                        '[class*="user"]',
+                        'header [class*="right"]',
+                    ]
+
+                    profile_trigger = None
+                    for selector in profile_selectors:
+                        try:
+                            elements = await page.query_selector_all(selector)
+                            for el in elements:
+                                box = await el.bounding_box()
+                                if box and box['x'] > 1000:  # Правая часть экрана
+                                    profile_trigger = el
+                                    break
+                            if profile_trigger:
+                                break
+                        except:
+                            continue
+
+                    if profile_trigger:
+                        # Наводим мышь чтобы открыть dropdown
+                        await profile_trigger.hover()
+                        await asyncio.sleep(1)
+
+                    # Парсим профили используя существующий метод
+                    profiles = await self._get_available_profiles(page)
+
+                except Exception as e:
+                    logger.error(f"Ошибка при парсинге профилей: {e}")
+                finally:
+                    await browser.close()
+
+        except Exception as e:
+            logger.error(f"Ошибка запуска браузера: {e}")
+
+        return profiles or []
+
 
 # Singleton instance
 _auth_service: Optional[WBAuthService] = None

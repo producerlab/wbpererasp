@@ -270,6 +270,13 @@ class DatabasePostgres:
             cursor.execute('DELETE FROM suppliers WHERE id = %s', (supplier_id,))
             return cursor.rowcount > 0
 
+    def update_supplier_name(self, supplier_id: int, name: str) -> bool:
+        """Переименовывает поставщика"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('UPDATE suppliers SET name = %s WHERE id = %s', (name, supplier_id))
+            return cursor.rowcount > 0
+
     # ==================== REDISTRIBUTION REQUESTS ====================
 
     def add_redistribution_request(self, **kwargs) -> int:

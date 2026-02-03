@@ -120,6 +120,10 @@ async def cmd_start(message: Message, state: FSMContext):
                         web_app=WebAppInfo(url=full_url)
                     )],
                     [InlineKeyboardButton(
+                        text="🔃 Обновить профили",
+                        callback_data="refresh_profiles"
+                    )],
+                    [InlineKeyboardButton(
                         text="🔄 Войти заново",
                         callback_data="reauth"
                     )]
