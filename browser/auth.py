@@ -736,7 +736,36 @@ class WBAuthService:
             # Проверяем успешную авторизацию (должен быть редирект на ЛК)
             if await self._check_logged_in(page):
                 session.status = AuthStatus.SUCCESS
-                session.cookies = await session.context.cookies()
+
+                # Получаем cookies из контекста
+                all_cookies = await session.context.cookies()
+
+                # Логируем cookies для отладки
+                cookie_names = [c.get('name') for c in all_cookies]
+                cookie_domains = list(set(c.get('domain', '') for c in all_cookies))
+                logger.info(f"[AUTH] Got {len(all_cookies)} cookies from domains: {cookie_domains}")
+                logger.info(f"[AUTH] Cookie names: {cookie_names}")
+
+                # Проверяем наличие auth cookies
+                auth_cookies = ['WILDAUTHNEW_V3', 'WBToken', 'WBTokenV3', 'x-supplier-id']
+                found_auth = [c for c in auth_cookies if c in cookie_names]
+                logger.info(f"[AUTH] Found auth cookies: {found_auth}")
+
+                # Переходим на seller.wildberries.ru для получения дополнительных cookies
+                logger.info("[AUTH] Navigating to seller.wildberries.ru to get seller cookies...")
+                try:
+                    await page.goto('https://seller.wildberries.ru/', wait_until='networkidle', timeout=15000)
+                    await asyncio.sleep(2)  # Ждём установки cookies
+
+                    # Получаем обновлённые cookies после перехода на seller
+                    all_cookies = await session.context.cookies()
+                    cookie_names_after = [c.get('name') for c in all_cookies]
+                    logger.info(f"[AUTH] After seller redirect: {len(all_cookies)} cookies")
+                    logger.info(f"[AUTH] New cookie names: {[c for c in cookie_names_after if c not in cookie_names]}")
+                except Exception as e:
+                    logger.warning(f"[AUTH] Failed to navigate to seller: {e}")
+
+                session.cookies = all_cookies
                 session.supplier_name = await self._get_supplier_name(page)
 
                 # Получаем список всех доступных профилей (поставщиков)
