@@ -2024,7 +2024,7 @@ class WBAuthService:
             context = await browser_service.create_context()
             await context.add_cookies(cookies)
 
-            page = await browser_service.new_page(context)
+            page = await browser_service.create_page(context)
 
             try:
                 # Переходим в seller.wildberries.ru
