@@ -680,40 +680,65 @@ class WBRedistributionService:
                 url = response.url
                 if response.status == 200:
                     # Ищем API которые могут содержать данные остатков
-                    if any(x in url.lower() for x in ['remains', 'stocks', 'warehouse', 'analytics']):
+                    keywords = ['remains', 'stocks', 'warehouse', 'balances', 'nomenclature', 'nm-report']
+                    if any(x in url.lower() for x in keywords):
                         try:
                             data = await response.json()
                             captured_data.append({'url': url, 'data': data})
-                            logger.info(f"📡 Captured API: {url[:80]}")
-                        except:
-                            pass
+                            # Логируем больше информации
+                            data_info = f"list[{len(data)}]" if isinstance(data, list) else f"dict keys: {list(data.keys())[:5]}" if isinstance(data, dict) else type(data).__name__
+                            logger.info(f"📡 Captured API: {url[:100]} -> {data_info}")
+                        except Exception as e:
+                            logger.debug(f"Failed to parse JSON from {url[:50]}: {e}")
 
             page.on('response', capture_response)
 
-            # Открываем страницу
+            # Открываем страницу с увеличенным timeout
             logger.info(f"Opening {self.STOCKS_URL}")
-            await page.goto(self.STOCKS_URL, wait_until='networkidle', timeout=30000)
-            await browser.human_delay(2000, 3000)
+            await page.goto(self.STOCKS_URL, wait_until='networkidle', timeout=60000)
+            await browser.human_delay(3000, 5000)  # Даём больше времени на загрузку API
 
             # Логируем что перехватили
+            logger.info(f"Total captured APIs: {len(captured_data)}")
             for item in captured_data:
-                logger.info(f"API URL: {item['url']}")
+                logger.info(f"API URL: {item['url'][:120]}")
                 data = item['data']
                 if isinstance(data, dict):
                     logger.info(f"  Keys: {list(data.keys())[:10]}")
+                elif isinstance(data, list):
+                    logger.info(f"  List with {len(data)} items")
+                    if data and isinstance(data[0], dict):
+                        logger.info(f"  First item keys: {list(data[0].keys())[:10]}")
 
             # Пробуем извлечь данные из API ответов
+            # Приоритет: balances > remains > stocks
+            for item in captured_data:
+                url = item['url'].lower()
+                data = item['data']
+
+                # Пропускаем если это не данные об остатках
+                if 'balances' not in url and 'remains' not in url and 'stocks' not in url:
+                    continue
+
+                if isinstance(data, list) and len(data) > 0:
+                    logger.info(f"✅ Found stock data in list from {url[:60]}")
+                    return data
+                elif isinstance(data, dict):
+                    for key in ['data', 'items', 'result', 'rows', 'content', 'report', 'balances']:
+                        if key in data and isinstance(data[key], list) and len(data[key]) > 0:
+                            logger.info(f"✅ Found stock data in '{key}' from {url[:60]}")
+                            return data[key]
+
+            # Fallback: любые данные с nmId
             for item in captured_data:
                 data = item['data']
                 if isinstance(data, list) and len(data) > 0:
-                    return data
-                elif isinstance(data, dict):
-                    for key in ['data', 'items', 'result', 'rows', 'content']:
-                        if key in data and isinstance(data[key], list):
-                            return data[key]
+                    if isinstance(data[0], dict) and ('nmId' in data[0] or 'nm_id' in data[0] or 'nmID' in data[0]):
+                        logger.info(f"✅ Found nmId data from {item['url'][:60]}")
+                        return data
 
             # Если API не перехватили - парсим таблицу
-            logger.info("Parsing table directly...")
+            logger.info("No stock data in captured APIs, parsing table directly...")
             return await self._parse_stocks_table(page)
 
         except Exception as e:
