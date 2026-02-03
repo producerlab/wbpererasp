@@ -678,10 +678,10 @@ class WBRedistributionService:
 
             async def capture_response(response):
                 url = response.url
-                if response.status == 200:
-                    # Ищем API которые могут содержать данные остатков
-                    keywords = ['remains', 'stocks', 'warehouse', 'balances', 'nomenclature', 'nm-report']
-                    if any(x in url.lower() for x in keywords):
+                # Перехватываем все JSON API от wildberries
+                if response.status == 200 and 'wildberries' in url:
+                    content_type = response.headers.get('content-type', '')
+                    if 'json' in content_type or '/api/' in url or '/ns/' in url:
                         try:
                             data = await response.json()
                             captured_data.append({'url': url, 'data': data})
@@ -689,14 +689,27 @@ class WBRedistributionService:
                             data_info = f"list[{len(data)}]" if isinstance(data, list) else f"dict keys: {list(data.keys())[:5]}" if isinstance(data, dict) else type(data).__name__
                             logger.info(f"📡 Captured API: {url[:100]} -> {data_info}")
                         except Exception as e:
-                            logger.debug(f"Failed to parse JSON from {url[:50]}: {e}")
+                            pass  # Не все ответы JSON
 
             page.on('response', capture_response)
 
             # Открываем страницу с увеличенным timeout
             logger.info(f"Opening {self.STOCKS_URL}")
-            await page.goto(self.STOCKS_URL, wait_until='networkidle', timeout=60000)
-            await browser.human_delay(3000, 5000)  # Даём больше времени на загрузку API
+            await page.goto(self.STOCKS_URL, wait_until='domcontentloaded', timeout=60000)
+
+            # Проверяем URL после загрузки
+            current_url = page.url
+            logger.info(f"Current URL after navigation: {current_url}")
+
+            # Проверяем редирект на логин
+            if '/login' in current_url or '/auth' in current_url or 'passport' in current_url:
+                logger.error(f"Session expired - redirected to login: {current_url}")
+                return []
+
+            # Ждём загрузки данных
+            await browser.human_delay(5000, 7000)  # Даём больше времени на загрузку API
+
+            logger.info(f"After delay, captured {len(captured_data)} APIs")
 
             # Логируем что перехватили
             logger.info(f"Total captured APIs: {len(captured_data)}")
