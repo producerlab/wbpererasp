@@ -255,11 +255,23 @@ async def search_product(
     logger.info(f"Searching for product: {nm_id}")
 
     try:
-        # Получаем остатки через внутренний API
+        # Сначала пробуем через HTTP API
         remains = await get_warehouse_remains_via_api(cookies_encrypted)
 
+        # Если HTTP не сработал, пробуем через Playwright (перехват API)
         if not remains:
-            logger.warning("No remains data received from API")
+            logger.info("HTTP API failed, trying Playwright fallback...")
+            try:
+                from browser.redistribution import get_redistribution_service
+                service = get_redistribution_service()
+                remains = await service.get_warehouse_stocks(cookies_encrypted)
+                if remains:
+                    logger.info(f"Got {len(remains)} items via Playwright")
+            except Exception as e:
+                logger.warning(f"Playwright fallback failed: {e}")
+
+        if not remains:
+            logger.warning("No remains data received from any source")
             return {
                 "found": False,
                 "query": q,
