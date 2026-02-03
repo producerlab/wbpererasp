@@ -4,7 +4,11 @@ API для управления заявками на перемещение.
 CRUD операции над redistribution_requests.
 """
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+
+logger = logging.getLogger(__name__)
 from pydantic import BaseModel
 from typing import Dict, List, Optional
 from datetime import datetime
@@ -206,7 +210,7 @@ async def delete_request(
                 await api.cancel_supply(request['supply_id'])
         except Exception as e:
             # Логируем ошибку, но продолжаем удаление
-            print(f"Failed to cancel supply: {e}")
+            logger.error(f"Failed to cancel supply: {e}")
 
     # Удаляем заявку
     success = db.delete_redistribution_request(request_id)

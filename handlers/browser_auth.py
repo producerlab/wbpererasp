@@ -10,8 +10,6 @@ Handlers для авторизации через SMS в ЛК Wildberries.
 import asyncio
 import logging
 from io import BytesIO
-from typing import TYPE_CHECKING
-
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, BufferedInputFile, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 from aiogram.filters import Command

@@ -14,17 +14,12 @@ from aiogram.types import Message, WebAppInfo, InlineKeyboardMarkup, InlineKeybo
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 
-from database import Database
+from db_factory import get_database
 from config import Config
 
 logger = logging.getLogger(__name__)
 
 router = Router(name="redistribution")
-
-
-def get_db() -> Database:
-    """Получает экземпляр БД"""
-    return Database(Config.DATABASE_PATH)
 
 
 # ==================== КОМАНДА /redistribute ====================
@@ -35,7 +30,7 @@ async def cmd_redistribute(message: Message, state: FSMContext):
     # Очищаем состояние на всякий случай
     await state.clear()
 
-    db = get_db()
+    db = get_database()
     user_id = message.from_user.id
 
     # Проверяем наличие токена
