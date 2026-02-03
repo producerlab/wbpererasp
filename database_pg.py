@@ -84,7 +84,10 @@ class DatabasePostgres:
                         CREATE TABLE IF NOT EXISTS browser_sessions (
                             id SERIAL PRIMARY KEY,
                             user_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
-                            phone VARCHAR(20) NOT NULL,
+                            phone VARCHAR(20),
+                            phone_encrypted TEXT,
+                            phone_hash VARCHAR(64),
+                            phone_last4 VARCHAR(4),
                             cookies_encrypted TEXT,
                             supplier_name VARCHAR(255),
                             status VARCHAR(20) DEFAULT 'active',
@@ -97,7 +100,45 @@ class DatabasePostgres:
                         CREATE INDEX IF NOT EXISTS idx_browser_sessions_user
                         ON browser_sessions(user_id, status)
                     ''')
+                    cursor.execute('''
+                        CREATE INDEX IF NOT EXISTS idx_browser_sessions_phone_hash
+                        ON browser_sessions(phone_hash)
+                    ''')
                     logger.info("browser_sessions table created")
+                else:
+                    # Миграция: добавляем колонки для шифрования телефона если их нет
+                    logger.info("Checking browser_sessions schema for encryption columns...")
+
+                    # Проверяем есть ли колонка phone_encrypted
+                    cursor.execute("""
+                        SELECT EXISTS (
+                            SELECT FROM information_schema.columns
+                            WHERE table_name = 'browser_sessions' AND column_name = 'phone_encrypted'
+                        )
+                    """)
+                    has_phone_encrypted = cursor.fetchone()['exists']
+
+                    if not has_phone_encrypted:
+                        logger.info("Adding phone encryption columns to browser_sessions...")
+                        cursor.execute('ALTER TABLE browser_sessions ADD COLUMN phone_encrypted TEXT')
+                        cursor.execute('ALTER TABLE browser_sessions ADD COLUMN phone_hash VARCHAR(64)')
+                        cursor.execute('ALTER TABLE browser_sessions ADD COLUMN phone_last4 VARCHAR(4)')
+                        cursor.execute('''
+                            CREATE INDEX IF NOT EXISTS idx_browser_sessions_phone_hash
+                            ON browser_sessions(phone_hash)
+                        ''')
+                        logger.info("Phone encryption columns added")
+
+                    # Делаем phone nullable если он NOT NULL
+                    cursor.execute("""
+                        SELECT is_nullable FROM information_schema.columns
+                        WHERE table_name = 'browser_sessions' AND column_name = 'phone'
+                    """)
+                    row = cursor.fetchone()
+                    if row and row['is_nullable'] == 'NO':
+                        logger.info("Making phone column nullable for security...")
+                        cursor.execute('ALTER TABLE browser_sessions ALTER COLUMN phone DROP NOT NULL')
+                        logger.info("Phone column is now nullable")
 
         except Exception as e:
             logger.error(f"Failed to ensure schema: {e}")
@@ -356,7 +397,7 @@ class DatabasePostgres:
                 )
                 VALUES (%s, %s, %s, %s, %s, %s, %s, 'active', CURRENT_TIMESTAMP, %s)
                 RETURNING id
-            ''', (user_id, phone, phone_encrypted, phone_hash, phone_last4,
+            ''', (user_id, None, phone_encrypted, phone_hash, phone_last4,
                   cookies_encrypted, supplier_name, expires_at))
 
             return cursor.fetchone()['id']
