@@ -36,15 +36,26 @@ async def get_warehouse_remains_via_api(cookies_encrypted: str) -> List[Dict]:
         cookies_list = json.loads(cookies_json)
 
         # Преобразуем в словарь для aiohttp
+        # Фильтруем только cookies для seller.wildberries.ru
         cookies_dict = {}
         for cookie in cookies_list:
             if isinstance(cookie, dict):
                 name = cookie.get('name')
                 value = cookie.get('value')
+                domain = cookie.get('domain', '')
+
+                # Принимаем cookies для wildberries.ru и seller.wildberries.ru
                 if name and value:
-                    cookies_dict[name] = value
+                    if 'wildberries' in domain or not domain:
+                        cookies_dict[name] = value
 
         logger.info(f"Загружено {len(cookies_dict)} cookies для API запроса")
+        logger.info(f"Cookie names: {list(cookies_dict.keys())}")
+
+        # Проверяем наличие важных cookies
+        important_cookies = ['WILDAUTHNEW_V3', 'WBToken', 'x-supplier-id', 'wbx-validation-key']
+        found_important = [c for c in important_cookies if c in cookies_dict]
+        logger.info(f"Found important cookies: {found_important}")
     except Exception as e:
         logger.error(f"Ошибка расшифровки cookies: {e}")
         raise HTTPException(status_code=401, detail="Invalid session cookies")
@@ -57,6 +68,10 @@ async def get_warehouse_remains_via_api(cookies_encrypted: str) -> List[Dict]:
         'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
         'Origin': base_url,
         'Referer': f'{base_url}/analytics-reports/warehouse-remains',
+        'X-Requested-With': 'XMLHttpRequest',
+        'Sec-Fetch-Dest': 'empty',
+        'Sec-Fetch-Mode': 'cors',
+        'Sec-Fetch-Site': 'same-origin',
     }
 
     # Пробуем разные endpoints для получения остатков
