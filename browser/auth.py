@@ -1645,10 +1645,10 @@ class WBAuthService:
             Список словарей с данными профилей:
             [
                 {
-                    'name': 'Хоснуллин Роман Аликович ИП',
-                    'company': 'EALY PERFUMES',
-                    'inn': '781434518365',
-                    'id': '64415',
+                    'name': 'Яковлев Вячеслав Валерьевич',
+                    'company': 'FitSmile',
+                    'inn': '246522599123',
+                    'id': '94549',
                     'is_active': True
                 },
                 ...
@@ -1656,131 +1656,156 @@ class WBAuthService:
         """
         try:
             logger.info("Получаем список доступных профилей...")
+            import re
 
-            # Селекторы для кнопки профиля в header (правый верхний угол)
-            profile_button_selectors = [
-                '[class*="profile"]',
-                '[class*="supplier"]',
-                '[class*="header"] [class*="name"]',
-                'button[class*="user"]',
-                '[data-test*="profile"]',
-            ]
+            browser = await self._get_browser()
 
-            # Ищем кнопку профиля
+            # Ищем кнопку профиля в правом верхнем углу по тексту
+            # WB показывает имя пользователя в header
             profile_button = None
-            for selector in profile_button_selectors:
-                try:
-                    elements = await page.query_selector_all(selector)
-                    # Ищем элемент в правом верхнем углу (высокий x, низкий y)
-                    for el in elements:
+
+            # Способ 1: Ищем элемент с именем пользователя в header (правый верхний угол)
+            try:
+                # Получаем все элементы в верхней части страницы
+                header_elements = await page.query_selector_all('header *, [class*="Header"] *, [class*="header"] *')
+                viewport = page.viewport_size
+
+                for el in header_elements:
+                    try:
                         box = await el.bounding_box()
-                        if box and box['x'] > page.viewport_size['width'] * 0.7 and box['y'] < 100:
-                            profile_button = el
-                            logger.info(f"Найдена кнопка профиля: {selector}")
-                            break
-                    if profile_button:
-                        break
-                except Exception:
-                    continue
+                        if not box:
+                            continue
+                        # Элемент должен быть в правой верхней части (x > 70% ширины, y < 80px)
+                        if box['x'] > viewport['width'] * 0.7 and box['y'] < 80:
+                            text = await el.inner_text()
+                            # Ищем элемент с ФИО (несколько слов с заглавной буквы)
+                            if text and len(text) > 5 and len(text) < 50:
+                                words = text.strip().split()
+                                if len(words) >= 2 and all(w[0].isupper() for w in words[:2] if w):
+                                    profile_button = el
+                                    logger.info(f"Найдена кнопка профиля с текстом: '{text[:30]}'")
+                                    break
+                    except Exception:
+                        continue
+            except Exception as e:
+                logger.debug(f"Способ 1 не сработал: {e}")
 
+            # Способ 2: Ищем по классам
             if not profile_button:
-                logger.warning("Не найдена кнопка профиля - возможно изменился UI")
-                return None
-
-            # Кликаем на кнопку чтобы открыть панель профилей
-            await profile_button.click()
-            await asyncio.sleep(1)  # Ждем появления панели
-
-            # Парсим список профилей
-            profiles = []
-
-            # Селекторы для элементов списка профилей
-            profile_item_selectors = [
-                '[class*="profile"] [class*="item"]',
-                '[class*="supplier"] [class*="item"]',
-                'div[class*="dropdown"] > div',
-            ]
-
-            profile_items = []
-            for selector in profile_item_selectors:
-                try:
-                    items = await page.query_selector_all(selector)
-                    if items and len(items) > 1:  # Должно быть несколько профилей
-                        profile_items = items
-                        logger.info(f"Найдено {len(items)} элементов профилей: {selector}")
-                        break
-                except Exception:
-                    continue
-
-            if not profile_items:
-                logger.warning("Не найдены элементы списка профилей")
-                return None
-
-            # Парсим каждый профиль
-            for item in profile_items:
-                try:
-                    text = await item.inner_text()
-                    if not text or len(text) < 5:
+                selectors = [
+                    '[class*="Profile"]',
+                    '[class*="profile"]',
+                    '[class*="UserMenu"]',
+                    '[class*="user-menu"]',
+                    '[class*="Account"]',
+                ]
+                for selector in selectors:
+                    try:
+                        elements = await page.query_selector_all(selector)
+                        for el in elements:
+                            box = await el.bounding_box()
+                            if box and box['x'] > page.viewport_size['width'] * 0.6 and box['y'] < 100:
+                                profile_button = el
+                                logger.info(f"Найдена кнопка профиля по селектору: {selector}")
+                                break
+                        if profile_button:
+                            break
+                    except Exception:
                         continue
 
-                    # Ищем ИНН (12-13 цифр)
-                    import re
-                    inn_match = re.search(r'ИНН\s*(\d{10,13})', text, re.IGNORECASE)
-                    id_match = re.search(r'ID\s*(\d+)', text, re.IGNORECASE)
+            if not profile_button:
+                logger.warning("Не найдена кнопка профиля - пробуем hover в правый верхний угол")
+                # Fallback: просто наводим мышь в правый верхний угол
+                await page.mouse.move(page.viewport_size['width'] - 100, 40)
+                await asyncio.sleep(1.5)
+            else:
+                # Наводим мышь на кнопку (hover вызывает dropdown в WB)
+                await profile_button.hover()
+                await asyncio.sleep(1.5)
 
-                    # Извлекаем название (первая строка обычно)
+            # Ждём появления dropdown панели
+            await browser.human_delay(500, 800)
+
+            # Теперь ищем элементы с ИНН - это ТОЧНО профили поставщиков
+            profiles = []
+
+            # Получаем весь текст страницы и ищем блоки с ИНН
+            # Ищем все div/span элементы которые содержат "ИНН"
+            all_elements = await page.query_selector_all('div, span, li, a')
+            logger.info(f"Найдено {len(all_elements)} элементов для анализа")
+
+            seen_inns = set()  # Для дедупликации
+
+            for el in all_elements:
+                try:
+                    text = await el.inner_text()
+                    if not text:
+                        continue
+
+                    # Ключевой критерий: элемент содержит "ИНН" с номером
+                    inn_match = re.search(r'ИНН\s*(\d{10,13})', text)
+                    if not inn_match:
+                        continue
+
+                    inn = inn_match.group(1)
+
+                    # Пропускаем дубликаты
+                    if inn in seen_inns:
+                        continue
+                    seen_inns.add(inn)
+
+                    # Парсим данные профиля
+                    id_match = re.search(r'ID\s*(\d+)', text)
+
+                    # Разбиваем на строки
                     lines = [line.strip() for line in text.split('\n') if line.strip()]
-                    name = lines[0] if lines else ''
 
-                    # Ищем название компании (обычно второе поле)
-                    company = lines[1] if len(lines) > 1 and not inn_match else ''
+                    # Первая строка - обычно ФИО
+                    name = ''
+                    company = ''
 
-                    # Проверяем активен ли этот профиль (есть ли галочка/выделение)
+                    for i, line in enumerate(lines):
+                        # Пропускаем строки с ИНН/ID
+                        if 'ИНН' in line or 'ID' in line.upper():
+                            continue
+                        # Первая значимая строка - имя
+                        if not name:
+                            name = line
+                        # Вторая - компания
+                        elif not company and line != name:
+                            company = line
+                            break
+
+                    # Проверяем, активен ли этот профиль
                     is_active = False
                     try:
-                        # Проверяем наличие активного маркера
-                        active_marker = await item.query_selector('[class*="active"], [class*="selected"], svg')
-                        is_active = active_marker is not None
+                        # Ищем маркер активного профиля (синяя точка, галочка)
+                        parent = await el.evaluate_handle('el => el.closest("div[class*=\\"item\\"], div[class*=\\"profile\\"], div[class*=\\"account\\"]")')
+                        if parent:
+                            active_marker = await parent.query_selector('[class*="active"], [class*="selected"], [class*="current"], circle[fill], svg[class*="check"]')
+                            is_active = active_marker is not None
                     except Exception:
                         pass
 
                     profile = {
                         'name': name,
-                        'company': company if company and company != name else '',
-                        'inn': inn_match.group(1) if inn_match else '',
+                        'company': company,
+                        'inn': inn,
                         'id': id_match.group(1) if id_match else '',
                         'is_active': is_active
                     }
 
-                    # Фильтруем пункты меню WB - это НЕ поставщики
-                    menu_items = [
-                        'досудебные претензии', 'обращения правообладателей',
-                        'справочный центр', 'поддержка', 'настройки',
-                        'выход', 'выйти', 'помощь', 'help', 'support',
-                        'уведомления', 'notifications', 'профиль', 'profile'
-                    ]
-                    name_lower = name.lower()
-
-                    # Пропускаем если это пункт меню
-                    if any(menu in name_lower for menu in menu_items):
-                        logger.debug(f"Пропускаем пункт меню: {name}")
-                        continue
-
-                    # Пропускаем если название слишком короткое или это число (99+)
-                    if len(name) < 3 or name.replace('+', '').isdigit():
-                        logger.debug(f"Пропускаем короткое/числовое: {name}")
-                        continue
-
-                    if profile['name']:  # Добавляем только если есть название
+                    if profile['name']:
                         profiles.append(profile)
-                        logger.debug(f"Найден профиль: {profile}")
+                        logger.info(f"✅ Найден профиль: {name} | {company} | ИНН {inn}")
 
                 except Exception as e:
-                    logger.debug(f"Ошибка при парсинге профиля: {e}")
+                    logger.debug(f"Ошибка при парсинге элемента: {e}")
                     continue
 
-            # Закрываем панель (клик вне или Escape)
+            # Закрываем dropdown
             await page.keyboard.press('Escape')
+            await browser.human_delay(200, 300)
 
             logger.info(f"Успешно получено {len(profiles)} профилей")
             return profiles if profiles else None
