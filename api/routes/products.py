@@ -260,13 +260,14 @@ async def search_product(
         if not remains:
             logger.info("HTTP API failed, trying Playwright fallback...")
             try:
-                from browser.redistribution import get_redistribution_service
-                service = get_redistribution_service()
+                from browser.redistribution import WBRedistributionService
+                # Создаём новый instance для каждого запроса (избегаем проблем с event loop)
+                service = WBRedistributionService()
                 remains = await service.get_warehouse_stocks(cookies_encrypted)
                 if remains:
                     logger.info(f"Got {len(remains)} items via Playwright")
             except Exception as e:
-                logger.warning(f"Playwright fallback failed: {e}")
+                logger.warning(f"Playwright fallback failed: {e}", exc_info=True)
 
         if not remains:
             logger.warning("No remains data received from any source")

@@ -78,10 +78,10 @@ class WBRedistributionService:
         self._browser_service: Optional[BrowserService] = None
 
     async def _get_browser(self) -> BrowserService:
-        """Получить browser service"""
-        if not self._browser_service:
-            self._browser_service = await get_browser_service(headless=True)
-        return self._browser_service
+        """Получить browser service - всегда создаём новый для избежания проблем с event loop"""
+        # Не используем кеширование из-за проблем с разными event loops
+        # (FastAPI vs Playwright могут работать в разных loops)
+        return await get_browser_service(headless=True)
 
     async def execute_redistribution(
         self,
