@@ -1,7 +1,7 @@
 """
 API для поиска товаров WB по артикулу.
 
-Использует внутренний API WB с cookies браузерной сессии.
+Использует browser automation для работы со страницей warehouse-remains.
 """
 
 import logging
@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Dict, Optional
 
 from database import Database
-from wb_api.internal_client import WBInternalClient
+from browser.redistribution import get_redistribution_service
 from api.main import get_current_user, get_db
 
 logger = logging.getLogger(__name__)
@@ -19,7 +19,7 @@ router = APIRouter()
 
 @router.get("/products/search")
 async def search_product(
-    q: str = Query(..., min_length=3, description="Артикул WB (nmId)"),
+    q: str = Query(..., min_length=1, description="Артикул WB (nmId) или часть артикула"),
     supplier_id: Optional[int] = Query(None, description="ID поставщика"),
     user: Dict = Depends(get_current_user),
     db: Database = Depends(get_db)
@@ -27,7 +27,8 @@ async def search_product(
     """
     Поиск товара по артикулу WB.
 
-    Использует cookies браузерной сессии для доступа к внутреннему API WB.
+    Использует browser automation для поиска через модальное окно
+    "Перераспределить остатки" на странице warehouse-remains.
     """
     user_id = user['user_id']
 
@@ -47,57 +48,60 @@ async def search_product(
         )
 
     try:
-        nm_id = int(q)
-    except ValueError:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid article number. Please enter a valid WB nmId"
-        )
+        service = get_redistribution_service()
 
-    try:
-        async with WBInternalClient(cookies_encrypted) as client:
-            # Получаем остатки товара
-            logger.info(f"Searching for product {nm_id}")
+        # Поиск через модальное окно с autocomplete
+        logger.info(f"Searching for product: {q}")
+        results = await service.search_product_via_modal(cookies_encrypted, q)
 
-            # Сначала попробуем получить все остатки
-            remains = await client.get_warehouse_remains()
-            logger.info(f"Got {len(remains)} items from warehouse remains")
+        if not results:
+            # Попробуем получить все остатки и найти там
+            logger.info("Modal search returned nothing, trying table parse...")
+            all_stocks = await service.get_warehouse_stocks(cookies_encrypted)
 
-            # Ищем наш товар
-            product_stocks = []
-            product_name = None
-
-            for item in remains:
-                item_nm = item.get('nmId') or item.get('nm_id') or item.get('nmID')
-                if item_nm == nm_id:
-                    product_name = item.get('name') or item.get('subject') or item.get('productName')
-                    product_stocks.append({
-                        "warehouse_id": item.get('warehouseId') or item.get('warehouse_id'),
-                        "warehouse_name": item.get('warehouseName') or item.get('warehouse_name') or 'Unknown',
-                        "quantity": item.get('quantity') or item.get('qty') or 0,
-                        "available": item.get('available') or item.get('quantity') or 0
-                    })
-
-            if not product_stocks:
-                # Товар не найден в остатках - возможно его нет на складах
-                return {
-                    "found": False,
-                    "nm_id": nm_id,
-                    "message": "Product not found in warehouse remains"
-                }
-
-            total_quantity = sum(s['quantity'] for s in product_stocks)
+            if all_stocks:
+                # Ищем по артикулу
+                try:
+                    nm_id = int(q)
+                    for item in all_stocks:
+                        if item.get('nmId') == nm_id:
+                            return {
+                                "found": True,
+                                "nm_id": nm_id,
+                                "product_name": item.get('subject') or item.get('brand'),
+                                "brand": item.get('brand'),
+                                "total_quantity": item.get('totalQuantity', 0),
+                                "warehouses": []
+                            }
+                except ValueError:
+                    pass
 
             return {
-                "found": True,
-                "nm_id": nm_id,
-                "product_name": product_name,
-                "total_quantity": total_quantity,
-                "warehouses": product_stocks
+                "found": False,
+                "query": q,
+                "message": "Product not found"
             }
 
+        # Если нашли через autocomplete
+        if len(results) == 1:
+            item = results[0]
+            return {
+                "found": True,
+                "nm_id": item.get('nmId'),
+                "product_name": item.get('name') or item.get('text'),
+                "suggestions": results
+            }
+
+        # Несколько результатов - возвращаем список для выбора
+        return {
+            "found": True,
+            "multiple": True,
+            "query": q,
+            "suggestions": results
+        }
+
     except Exception as e:
-        logger.error(f"Error searching product {nm_id}: {e}")
+        logger.error(f"Error searching product '{q}': {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail=f"Failed to search product: {str(e)}"

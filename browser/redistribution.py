@@ -46,8 +46,9 @@ class WBRedistributionService:
     """Сервис перемещения остатков"""
 
     # URL страницы перемещения в ЛК
-    REDISTRIBUTION_URL = "https://seller.wildberries.ru/supplies-management/redistribution"
-    STOCKS_URL = "https://seller.wildberries.ru/analytics/warehouse-remains"
+    # Правильный URL - страница остатков на складе с кнопкой "Перераспределить остатки"
+    REDISTRIBUTION_URL = "https://seller.wildberries.ru/analytics-reports/warehouse-remains"
+    STOCKS_URL = "https://seller.wildberries.ru/analytics-reports/warehouse-remains"
 
     # Селекторы элементов
     SELECTORS = {
@@ -445,6 +446,306 @@ class WBRedistributionService:
         finally:
             if context:
                 await context.close()
+
+
+    async def search_product_via_modal(
+        self,
+        cookies_encrypted: str,
+        query: str
+    ) -> list:
+        """
+        Поиск товара через модальное окно "Перераспределить остатки".
+
+        Открывает страницу warehouse-remains, кликает кнопку,
+        вводит артикул в autocomplete и получает результаты.
+
+        Args:
+            cookies_encrypted: Зашифрованные cookies
+            query: Артикул или часть артикула
+
+        Returns:
+            Список найденных товаров
+        """
+        browser = await self._get_browser()
+        context: Optional[BrowserContext] = None
+        page: Optional[Page] = None
+
+        try:
+            cookies_json = decrypt_token(cookies_encrypted)
+            cookies = browser.deserialize_cookies(cookies_json)
+
+            context = await browser.create_context(cookies=cookies)
+            page = await browser.create_page(context)
+
+            # Открываем страницу остатков
+            logger.info(f"Opening {self.STOCKS_URL} for product search")
+            await page.goto(self.STOCKS_URL, wait_until='networkidle', timeout=30000)
+            await browser.human_delay(1500, 2500)
+
+            # Проверяем авторизацию
+            if '/login' in page.url or 'auth' in page.url:
+                logger.warning("Session expired")
+                return []
+
+            # Кликаем кнопку "Перераспределить остатки"
+            redistribute_btn = None
+            selectors_to_try = [
+                'text=Перераспределить остатки',
+                'button:has-text("Перераспределить")',
+                '[class*="redistribute"]',
+                'a:has-text("Перераспределить")',
+            ]
+
+            for selector in selectors_to_try:
+                try:
+                    redistribute_btn = await page.query_selector(selector)
+                    if redistribute_btn:
+                        logger.info(f"Found redistribute button: {selector}")
+                        break
+                except:
+                    continue
+
+            if not redistribute_btn:
+                logger.error("Redistribute button not found")
+                screenshot = await browser.take_screenshot(page)
+                logger.info("Screenshot saved for debugging")
+                return []
+
+            await redistribute_btn.click()
+            await browser.human_delay(1000, 1500)
+
+            # Ищем поле ввода артикула в модальном окне
+            input_selectors = [
+                'input[placeholder*="артикул" i]',
+                'input[placeholder*="Артикул"]',
+                'input[placeholder*="nmId"]',
+                '[class*="modal"] input',
+                '[role="dialog"] input',
+                'input[type="text"]',
+            ]
+
+            input_field = None
+            for selector in input_selectors:
+                try:
+                    input_field = await page.query_selector(selector)
+                    if input_field:
+                        # Проверяем что поле видимо
+                        is_visible = await input_field.is_visible()
+                        if is_visible:
+                            logger.info(f"Found input field: {selector}")
+                            break
+                        input_field = None
+                except:
+                    continue
+
+            if not input_field:
+                logger.error("Article input field not found in modal")
+                return []
+
+            # Вводим запрос
+            await input_field.click()
+            await browser.human_delay(200, 400)
+            await input_field.fill(query)
+            await browser.human_delay(1500, 2500)  # Ждем autocomplete
+
+            # Парсим результаты autocomplete
+            results = []
+            suggestion_selectors = [
+                '[class*="option"]',
+                '[class*="suggestion"]',
+                '[class*="autocomplete"] li',
+                '[role="option"]',
+                '[class*="dropdown"] [class*="item"]',
+                '[class*="listbox"] > div',
+            ]
+
+            for selector in suggestion_selectors:
+                try:
+                    suggestions = await page.query_selector_all(selector)
+                    if suggestions:
+                        logger.info(f"Found {len(suggestions)} suggestions with {selector}")
+                        for suggestion in suggestions:
+                            try:
+                                text = await suggestion.inner_text()
+                                text = text.strip()
+                                if text and text != query:
+                                    # Пробуем извлечь nmId
+                                    parts = text.split()
+                                    if parts:
+                                        try:
+                                            nm_id = int(parts[0])
+                                            name = ' '.join(parts[1:]) if len(parts) > 1 else ''
+                                            results.append({
+                                                'nmId': nm_id,
+                                                'name': name,
+                                                'text': text
+                                            })
+                                        except ValueError:
+                                            # Первая часть не число
+                                            results.append({
+                                                'text': text
+                                            })
+                            except:
+                                continue
+                        break
+                except:
+                    continue
+
+            logger.info(f"Search returned {len(results)} results for '{query}'")
+            return results
+
+        except PlaywrightTimeout as e:
+            logger.error(f"Timeout during product search: {e}")
+            return []
+
+        except Exception as e:
+            logger.error(f"Error searching product: {e}", exc_info=True)
+            return []
+
+        finally:
+            if context:
+                await context.close()
+
+    async def get_warehouse_stocks(
+        self,
+        cookies_encrypted: str
+    ) -> list:
+        """
+        Получить все остатки из таблицы на странице warehouse-remains.
+
+        Args:
+            cookies_encrypted: Зашифрованные cookies
+
+        Returns:
+            Список товаров с остатками
+        """
+        browser = await self._get_browser()
+        context: Optional[BrowserContext] = None
+        page: Optional[Page] = None
+
+        try:
+            cookies_json = decrypt_token(cookies_encrypted)
+            cookies = browser.deserialize_cookies(cookies_json)
+
+            context = await browser.create_context(cookies=cookies)
+            page = await browser.create_page(context)
+
+            # Перехватываем API ответы
+            captured_data = []
+
+            async def capture_response(response):
+                url = response.url
+                if response.status == 200:
+                    # Ищем API которые могут содержать данные остатков
+                    if any(x in url.lower() for x in ['remains', 'stocks', 'warehouse', 'analytics']):
+                        try:
+                            data = await response.json()
+                            captured_data.append({'url': url, 'data': data})
+                            logger.info(f"📡 Captured API: {url[:80]}")
+                        except:
+                            pass
+
+            page.on('response', capture_response)
+
+            # Открываем страницу
+            logger.info(f"Opening {self.STOCKS_URL}")
+            await page.goto(self.STOCKS_URL, wait_until='networkidle', timeout=30000)
+            await browser.human_delay(2000, 3000)
+
+            # Логируем что перехватили
+            for item in captured_data:
+                logger.info(f"API URL: {item['url']}")
+                data = item['data']
+                if isinstance(data, dict):
+                    logger.info(f"  Keys: {list(data.keys())[:10]}")
+
+            # Пробуем извлечь данные из API ответов
+            for item in captured_data:
+                data = item['data']
+                if isinstance(data, list) and len(data) > 0:
+                    return data
+                elif isinstance(data, dict):
+                    for key in ['data', 'items', 'result', 'rows', 'content']:
+                        if key in data and isinstance(data[key], list):
+                            return data[key]
+
+            # Если API не перехватили - парсим таблицу
+            logger.info("Parsing table directly...")
+            return await self._parse_stocks_table(page)
+
+        except Exception as e:
+            logger.error(f"Error getting warehouse stocks: {e}")
+            return []
+
+        finally:
+            if context:
+                await context.close()
+
+    async def _parse_stocks_table(self, page: Page) -> list:
+        """Парсит таблицу остатков со страницы"""
+        results = []
+
+        try:
+            # Ждем таблицу
+            await page.wait_for_selector('table', timeout=10000)
+
+            # Получаем заголовки
+            headers = []
+            header_cells = await page.query_selector_all('table thead th')
+            for cell in header_cells:
+                text = await cell.inner_text()
+                headers.append(text.strip().lower())
+
+            logger.info(f"Table headers: {headers}")
+
+            # Получаем строки
+            rows = await page.query_selector_all('table tbody tr')
+            logger.info(f"Found {len(rows)} rows")
+
+            for row in rows:
+                try:
+                    cells = await row.query_selector_all('td')
+                    if len(cells) >= 3:
+                        item = {}
+                        for i, cell in enumerate(cells):
+                            text = await cell.inner_text()
+                            text = text.strip()
+
+                            if i < len(headers):
+                                header = headers[i]
+                                if 'бренд' in header:
+                                    item['brand'] = text
+                                elif 'предмет' in header:
+                                    item['subject'] = text
+                                elif 'артикул wb' in header or 'nmid' in header.lower():
+                                    try:
+                                        item['nmId'] = int(text)
+                                    except:
+                                        pass
+                                elif 'объем' in header or 'объём' in header:
+                                    try:
+                                        item['volume'] = float(text.replace(',', '.'))
+                                    except:
+                                        pass
+                                elif 'всего' in header and 'склад' in header:
+                                    try:
+                                        item['totalQuantity'] = int(text)
+                                    except:
+                                        pass
+
+                        if item.get('nmId'):
+                            results.append(item)
+
+                except Exception as e:
+                    logger.debug(f"Error parsing row: {e}")
+                    continue
+
+            logger.info(f"Parsed {len(results)} items from table")
+
+        except Exception as e:
+            logger.error(f"Error parsing stocks table: {e}")
+
+        return results
 
 
 # Singleton instance
