@@ -129,7 +129,10 @@ class Database:
                 CREATE TABLE IF NOT EXISTS browser_sessions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER NOT NULL,
-                    phone TEXT NOT NULL,
+                    phone TEXT,
+                    phone_encrypted TEXT,
+                    phone_hash TEXT,
+                    phone_last4 TEXT,
                     cookies_encrypted TEXT,
                     supplier_name TEXT,
                     status TEXT DEFAULT 'active',
@@ -156,6 +159,10 @@ class Database:
             cursor.execute('''
                 CREATE INDEX IF NOT EXISTS idx_browser_sessions_user
                 ON browser_sessions(user_id, status)
+            ''')
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_browser_sessions_phone_hash
+                ON browser_sessions(phone_hash)
             ''')
 
             logger.info("Database initialized successfully")
@@ -660,7 +667,7 @@ class Database:
 
         Args:
             user_id: Telegram ID пользователя
-            phone: Номер телефона
+            phone: Номер телефона (будет зашифрован)
             cookies_encrypted: Зашифрованные cookies
             supplier_name: Название магазина
             expires_days: Количество дней до истечения сессии
@@ -668,6 +675,8 @@ class Database:
         Returns:
             ID созданной сессии
         """
+        from utils.encryption import encrypt_phone, hash_phone, get_phone_last4
+
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
@@ -678,15 +687,22 @@ class Database:
                 WHERE user_id = ? AND status = 'active'
             ''', (user_id,))
 
-            # Создаем новую сессию
+            # Шифруем телефон для безопасного хранения
+            phone_encrypted = encrypt_phone(phone)
+            phone_hash = hash_phone(phone)
+            phone_last4 = get_phone_last4(phone)
+
+            # Создаем новую сессию с зашифрованным телефоном
             expires_at = datetime.now() + timedelta(days=expires_days)
             cursor.execute('''
                 INSERT INTO browser_sessions (
-                    user_id, phone, cookies_encrypted, supplier_name,
+                    user_id, phone, phone_encrypted, phone_hash, phone_last4,
+                    cookies_encrypted, supplier_name,
                     status, last_used_at, expires_at
                 )
-                VALUES (?, ?, ?, ?, 'active', CURRENT_TIMESTAMP, ?)
-            ''', (user_id, phone, cookies_encrypted, supplier_name, expires_at))
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'active', CURRENT_TIMESTAMP, ?)
+            ''', (user_id, None, phone_encrypted, phone_hash, phone_last4,
+                  cookies_encrypted, supplier_name, expires_at))
 
             return cursor.lastrowid
 
@@ -695,7 +711,8 @@ class Database:
         Получает активную браузерную сессию пользователя.
 
         Returns:
-            Словарь с данными сессии или None
+            Словарь с данными сессии или None.
+            Поле 'phone' содержит расшифрованный номер или последние 4 цифры.
         """
         with self._get_connection() as conn:
             cursor = conn.cursor()
@@ -707,7 +724,38 @@ class Database:
                 LIMIT 1
             ''', (user_id,))
             row = cursor.fetchone()
-            return dict(row) if row else None
+            if not row:
+                return None
+
+            result = dict(row)
+            # Расшифровываем телефон для обратной совместимости
+            result['phone'] = self._decrypt_session_phone(result)
+            return result
+
+    def _decrypt_session_phone(self, session: Dict) -> str:
+        """
+        Расшифровывает телефон из сессии.
+
+        Поддерживает обратную совместимость со старыми записями.
+        """
+        from utils.encryption import decrypt_phone
+
+        # Приоритет: зашифрованный телефон > старое поле phone > last4
+        if session.get('phone_encrypted'):
+            try:
+                return decrypt_phone(session['phone_encrypted'])
+            except Exception:
+                pass
+
+        # Fallback на старое поле (для старых записей)
+        if session.get('phone'):
+            return session['phone']
+
+        # Fallback на last4 с маской
+        if session.get('phone_last4'):
+            return f"****{session['phone_last4']}"
+
+        return "****"
 
     def get_browser_sessions(self, user_id: int, active_only: bool = True) -> List[Dict]:
         """Получает все сессии браузера пользователя"""
@@ -725,7 +773,14 @@ class Database:
                     WHERE user_id = ?
                     ORDER BY created_at DESC
                 ''', (user_id,))
-            return [dict(row) for row in cursor.fetchall()]
+
+            results = []
+            for row in cursor.fetchall():
+                session = dict(row)
+                # Расшифровываем телефон для обратной совместимости
+                session['phone'] = self._decrypt_session_phone(session)
+                results.append(session)
+            return results
 
     def get_browser_session_by_id(self, session_id: int) -> Optional[Dict]:
         """Получает сессию по ID"""
@@ -733,7 +788,11 @@ class Database:
             cursor = conn.cursor()
             cursor.execute('SELECT * FROM browser_sessions WHERE id = ?', (session_id,))
             row = cursor.fetchone()
-            return dict(row) if row else None
+            if not row:
+                return None
+            session = dict(row)
+            session['phone'] = self._decrypt_session_phone(session)
+            return session
 
     def update_browser_session_last_used(self, session_id: int) -> bool:
         """Обновляет время последнего использования сессии"""

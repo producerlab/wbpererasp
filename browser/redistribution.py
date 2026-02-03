@@ -483,8 +483,14 @@ class WBRedistributionService:
             await browser.human_delay(1500, 2500)
 
             # Проверяем авторизацию
-            if '/login' in page.url or 'auth' in page.url:
-                logger.warning("Session expired")
+            current_url = page.url
+            logger.info(f"Current URL after navigation: {current_url}")
+            if '/login' in current_url or 'auth' in current_url:
+                logger.warning(f"Session expired - redirected to: {current_url}")
+                # Сохраняем скриншот для отладки
+                screenshot_path = "/tmp/wb_session_expired.png"
+                await browser.take_screenshot(page, path=screenshot_path)
+                logger.info(f"Session expired screenshot saved to {screenshot_path}")
                 return []
 
             # Кликаем кнопку "Перераспределить остатки"
@@ -506,9 +512,46 @@ class WBRedistributionService:
                     continue
 
             if not redistribute_btn:
-                logger.error("Redistribute button not found")
-                screenshot = await browser.take_screenshot(page)
-                logger.info("Screenshot saved for debugging")
+                logger.warning("Redistribute button not found, trying search on page directly")
+                # Сохраняем скриншот для отладки
+                screenshot_path = "/tmp/wb_debug_screenshot.png"
+                await browser.take_screenshot(page, path=screenshot_path)
+                logger.info(f"Screenshot saved to {screenshot_path}")
+
+                # Пробуем найти поле поиска прямо на странице
+                search_selectors = [
+                    'input[placeholder*="Поиск"]',
+                    'input[placeholder*="поиск"]',
+                    'input[placeholder*="Артикул"]',
+                    'input[placeholder*="артикул"]',
+                    'input[placeholder*="nmId"]',
+                    'input[type="search"]',
+                    '[class*="search"] input',
+                    '[class*="Search"] input',
+                ]
+
+                for selector in search_selectors:
+                    try:
+                        search_input = await page.query_selector(selector)
+                        if search_input and await search_input.is_visible():
+                            logger.info(f"Found search input on page: {selector}")
+                            await search_input.click()
+                            await browser.human_delay(200, 400)
+                            await search_input.fill(query)
+                            await browser.human_delay(1500, 2500)
+
+                            # Ждём и проверяем результаты в таблице или autocomplete
+                            # Пробуем нажать Enter для поиска
+                            await page.keyboard.press('Enter')
+                            await browser.human_delay(2000, 3000)
+
+                            # Возвращаем пустой список, данные будут в fallback через get_warehouse_stocks
+                            return []
+                    except Exception as e:
+                        logger.debug(f"Selector {selector} failed: {e}")
+                        continue
+
+                logger.error("No search input found on page")
                 return []
 
             await redistribute_btn.click()
@@ -686,8 +729,13 @@ class WBRedistributionService:
         results = []
 
         try:
-            # Ждем таблицу
-            await page.wait_for_selector('table', timeout=10000)
+            # Сохраняем скриншот для отладки
+            screenshot_path = "/tmp/wb_table_debug.png"
+            await page.screenshot(path=screenshot_path)
+            logger.info(f"Table page screenshot saved to {screenshot_path}")
+
+            # Ждем таблицу с увеличенным таймаутом
+            await page.wait_for_selector('table', timeout=30000)
 
             # Получаем заголовки
             headers = []

@@ -101,6 +101,23 @@ async def _process_phone_auth(message: Message, state: FSMContext, phone: str):
     user_id = message.from_user.id
     db = get_db()
 
+    # Rate limiting: защита от спама авторизаций
+    from utils.rate_limiter import auth_limiter, format_remaining_time
+    if not auth_limiter.is_allowed(user_id):
+        remaining = auth_limiter.get_block_remaining(user_id)
+        await message.answer(
+            f"⚠️ <b>Слишком много попыток авторизации</b>\n\n"
+            f"Подождите {format_remaining_time(remaining)} и попробуйте снова.\n\n"
+            f"Это ограничение защищает от спама и блокировки аккаунта.",
+            parse_mode="HTML",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        await state.clear()
+        return
+
+    # Записываем попытку авторизации
+    auth_limiter.record_attempt(user_id)
+
     # Валидация номера
     auth_service = get_auth_service()
     try:
@@ -308,7 +325,12 @@ async def _handle_code_result(message: Message, state: FSMContext, session, phon
     auth_service = get_auth_service()
 
     if session.status == AuthStatus.SUCCESS:
-        # Успешная авторизация - сохраняем сессию
+        # Успешная авторизация - сбрасываем rate limiters
+        from utils.rate_limiter import auth_limiter, sms_code_limiter
+        auth_limiter.reset(user_id)
+        sms_code_limiter.reset(user_id)
+
+        # Сохраняем сессию
         cookies_json = auth_service._browser_service.serialize_cookies(session.cookies) if auth_service._browser_service else ""
 
         if not cookies_json:
@@ -417,13 +439,30 @@ async def _handle_code_result(message: Message, state: FSMContext, session, phon
             )
 
     elif session.status == AuthStatus.INVALID_CODE:
+        # Rate limiting: защита от брутфорса SMS кодов
+        from utils.rate_limiter import sms_code_limiter, format_remaining_time
+        sms_code_limiter.record_attempt(user_id)
+
+        if not sms_code_limiter.is_allowed(user_id):
+            remaining = sms_code_limiter.get_block_remaining(user_id)
+            await state.clear()
+            await auth_service.close_session(user_id)
+            await message.answer(
+                f"⚠️ <b>Слишком много неверных кодов</b>\n\n"
+                f"Подождите {format_remaining_time(remaining)} и попробуйте снова: /auth",
+                parse_mode="HTML"
+            )
+            return
+
         # WB сбрасывает код после неверной попытки
         # Не закрываем сессию - будем ждать и запрашивать новый код автоматически
+        attempts_left = sms_code_limiter.get_attempts_remaining(user_id)
         await message.answer(
-            "❌ <b>Неверный код</b>\n\n"
-            "Wildberries сбросил попытку ввода.\n"
-            "Старый код больше не действует.\n\n"
-            "⏳ <b>Ожидайте ~1 минуту</b> — бот автоматически запросит новый код...",
+            f"❌ <b>Неверный код</b>\n\n"
+            f"Wildberries сбросил попытку ввода.\n"
+            f"Старый код больше не действует.\n\n"
+            f"⚠️ Осталось попыток: {attempts_left}\n\n"
+            f"⏳ <b>Ожидайте ~1 минуту</b> — бот автоматически запросит новый код...",
             parse_mode="HTML"
         )
 
@@ -559,7 +598,8 @@ async def process_code(message: Message, state: FSMContext):
         error_msg = str(e)
         if "Сессия не найдена" in error_msg or "session" in error_msg.lower():
             # Сессия истекла - автоматически перезапускаем авторизацию
-            logger.warning(f"Session expired for user {user_id}, auto-restarting auth with phone {phone}")
+            from utils.encryption import mask_phone
+            logger.warning(f"Session expired for user {user_id}, auto-restarting auth with phone {mask_phone(phone)}")
 
             await message.answer(
                 "⚠️ <b>Сессия истекла</b>\n\n"

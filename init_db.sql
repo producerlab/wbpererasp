@@ -64,7 +64,11 @@ CREATE TABLE IF NOT EXISTS redistribution_requests (
 CREATE TABLE IF NOT EXISTS browser_sessions (
     id SERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
-    phone VARCHAR(20) NOT NULL,
+    -- Защита номеров телефонов:
+    phone VARCHAR(20),                    -- DEPRECATED: для обратной совместимости
+    phone_encrypted TEXT,                 -- Зашифрованный номер (Fernet)
+    phone_hash VARCHAR(64),               -- SHA-256 хеш для поиска
+    phone_last4 VARCHAR(4),               -- Последние 4 цифры для отображения
     cookies_encrypted TEXT,
     supplier_name VARCHAR(255),
     status VARCHAR(20) DEFAULT 'active',
@@ -82,3 +86,4 @@ CREATE INDEX IF NOT EXISTS idx_suppliers_user_id ON suppliers(user_id);
 CREATE INDEX IF NOT EXISTS idx_requests_user_id ON redistribution_requests(user_id);
 CREATE INDEX IF NOT EXISTS idx_requests_status ON redistribution_requests(status);
 CREATE INDEX IF NOT EXISTS idx_browser_sessions_user ON browser_sessions(user_id, status);
+CREATE INDEX IF NOT EXISTS idx_browser_sessions_phone_hash ON browser_sessions(phone_hash);

@@ -327,8 +327,9 @@ class DatabasePostgres:
         supplier_name: str = None,
         expires_days: int = 30
     ) -> int:
-        """Добавляет браузерную сессию"""
+        """Добавляет браузерную сессию с зашифрованным телефоном"""
         from datetime import datetime, timedelta
+        from utils.encryption import encrypt_phone, hash_phone, get_phone_last4
 
         with self._get_connection() as conn:
             cursor = conn.cursor()
@@ -340,21 +341,28 @@ class DatabasePostgres:
                 WHERE user_id = %s AND status = 'active'
             ''', (user_id,))
 
-            # Создаем новую
+            # Шифруем телефон для безопасного хранения
+            phone_encrypted = encrypt_phone(phone)
+            phone_hash = hash_phone(phone)
+            phone_last4 = get_phone_last4(phone)
+
+            # Создаем новую сессию с зашифрованным телефоном
             expires_at = datetime.now() + timedelta(days=expires_days)
             cursor.execute('''
                 INSERT INTO browser_sessions (
-                    user_id, phone, cookies_encrypted, supplier_name,
+                    user_id, phone, phone_encrypted, phone_hash, phone_last4,
+                    cookies_encrypted, supplier_name,
                     status, last_used_at, expires_at
                 )
-                VALUES (%s, %s, %s, %s, 'active', CURRENT_TIMESTAMP, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, 'active', CURRENT_TIMESTAMP, %s)
                 RETURNING id
-            ''', (user_id, phone, cookies_encrypted, supplier_name, expires_at))
+            ''', (user_id, None, phone_encrypted, phone_hash, phone_last4,
+                  cookies_encrypted, supplier_name, expires_at))
 
             return cursor.fetchone()['id']
 
     def get_browser_session(self, user_id: int) -> Optional[Dict]:
-        """Получает активную браузерную сессию"""
+        """Получает активную браузерную сессию с расшифрованным телефоном"""
         with self._get_connection() as conn:
             cursor = conn.cursor()
             # Сначала проверим, есть ли вообще сессии для этого пользователя
@@ -371,10 +379,41 @@ class DatabasePostgres:
             ''', (user_id,))
             row = cursor.fetchone()
             logger.info(f"[DB] get_browser_session: found={row is not None}")
-            return dict(row) if row else None
+            if not row:
+                return None
+
+            result = dict(row)
+            # Расшифровываем телефон для обратной совместимости
+            result['phone'] = self._decrypt_session_phone(result)
+            return result
+
+    def _decrypt_session_phone(self, session: Dict) -> str:
+        """
+        Расшифровывает телефон из сессии.
+
+        Поддерживает обратную совместимость со старыми записями.
+        """
+        from utils.encryption import decrypt_phone
+
+        # Приоритет: зашифрованный телефон > старое поле phone > last4
+        if session.get('phone_encrypted'):
+            try:
+                return decrypt_phone(session['phone_encrypted'])
+            except Exception:
+                pass
+
+        # Fallback на старое поле (для старых записей)
+        if session.get('phone'):
+            return session['phone']
+
+        # Fallback на last4 с маской
+        if session.get('phone_last4'):
+            return f"****{session['phone_last4']}"
+
+        return "****"
 
     def get_browser_sessions(self, user_id: int, active_only: bool = True) -> List[Dict]:
-        """Получает все сессии пользователя"""
+        """Получает все сессии пользователя с расшифрованными телефонами"""
         with self._get_connection() as conn:
             cursor = conn.cursor()
             if active_only:
@@ -389,7 +428,14 @@ class DatabasePostgres:
                     WHERE user_id = %s
                     ORDER BY created_at DESC
                 ''', (user_id,))
-            return [dict(row) for row in cursor.fetchall()]
+
+            results = []
+            for row in cursor.fetchall():
+                session = dict(row)
+                # Расшифровываем телефон для обратной совместимости
+                session['phone'] = self._decrypt_session_phone(session)
+                results.append(session)
+            return results
 
     def update_browser_session_status(self, session_id: int, status: str) -> bool:
         """Обновляет статус сессии"""

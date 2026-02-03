@@ -22,6 +22,7 @@ load_dotenv(env_path)
 from browser.auth import WBAuthService
 from browser.browser_service import get_browser_service
 from db_factory import get_database
+from utils.encryption import encrypt_token
 
 
 async def main():
@@ -45,10 +46,13 @@ async def main():
     if not phone.startswith('+'):
         phone = '+' + phone
 
+    # Маскируем телефон для безопасного отображения
+    phone_masked = f"****{phone[-4:]}" if len(phone) >= 4 else "****"
+
     print()
     print("=" * 60)
     print(f"👤 Telegram ID: {telegram_id}")
-    print(f"📱 Телефон: {phone}")
+    print(f"📱 Телефон: {phone_masked}")
     print("=" * 60)
     print()
 
@@ -94,7 +98,7 @@ async def main():
 
         print()
         print("✅ SMS запрошен успешно!")
-        print(f"📱 SMS должен прийти на {phone}")
+        print(f"📱 SMS должен прийти на {phone_masked}")
         print()
 
         # Шаг 2: Запрашиваем код у пользователя
@@ -134,9 +138,10 @@ async def main():
         print("💾 Сохраняю данные в Railway БД...")
         print()
 
-        # Получаем cookies из результата авторизации
+        # Получаем cookies из результата авторизации и ШИФРУЕМ
         import json
         cookies_json = json.dumps(result.cookies) if result.cookies else "{}"
+        cookies_encrypted = encrypt_token(cookies_json)  # КРИТИЧНО: шифруем cookies!
 
         # Определяем имя поставщика
         supplier_name = None
@@ -150,7 +155,7 @@ async def main():
         session_id = db.add_browser_session(
             user_id=telegram_id,
             phone=phone,
-            cookies_encrypted=cookies_json,
+            cookies_encrypted=cookies_encrypted,  # Зашифрованные cookies
             supplier_name=supplier_name or f"WB ({phone[-4:]})"
         )
         print(f"   ✅ Browser session создан (ID: {session_id})")

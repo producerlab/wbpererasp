@@ -1,9 +1,11 @@
 """
-Шифрование WB API токенов.
+Шифрование WB API токенов и чувствительных данных.
 
-Использует Fernet (симметричное шифрование) для безопасного хранения токенов.
+Использует Fernet (симметричное шифрование) для безопасного хранения токенов,
+cookies и номеров телефонов.
 """
 
+import hashlib
 import logging
 from typing import Optional
 
@@ -91,3 +93,88 @@ def decrypt_token(encrypted_token: str) -> str:
     except Exception as e:
         logger.error(f"Ошибка расшифровки токена: {e}")
         return encrypted_token
+
+
+# ========================================
+# Функции для работы с номерами телефонов
+# ========================================
+
+def hash_phone(phone: str) -> str:
+    """
+    Создаёт SHA-256 хеш номера телефона для поиска.
+
+    Хеш позволяет искать по телефону без хранения в открытом виде.
+
+    Args:
+        phone: Номер телефона (например, +79991234567)
+
+    Returns:
+        SHA-256 хеш номера
+    """
+    # Нормализуем номер перед хешированием
+    normalized = phone.strip().replace(' ', '').replace('-', '')
+    return hashlib.sha256(normalized.encode()).hexdigest()
+
+
+def encrypt_phone(phone: str) -> str:
+    """
+    Шифрует номер телефона для безопасного хранения.
+
+    Args:
+        phone: Номер телефона
+
+    Returns:
+        Зашифрованный номер (base64)
+
+    Raises:
+        RuntimeError: Если шифрование не настроено
+    """
+    return encrypt_token(phone)
+
+
+def decrypt_phone(encrypted_phone: str) -> str:
+    """
+    Расшифровывает номер телефона.
+
+    Args:
+        encrypted_phone: Зашифрованный номер
+
+    Returns:
+        Расшифрованный номер или исходный если расшифровка не удалась
+    """
+    return decrypt_token(encrypted_phone)
+
+
+def get_phone_last4(phone: str) -> str:
+    """
+    Возвращает последние 4 цифры номера телефона.
+
+    Используется для отображения пользователю без раскрытия полного номера.
+
+    Args:
+        phone: Номер телефона
+
+    Returns:
+        Последние 4 символа номера
+    """
+    if not phone:
+        return "****"
+    return phone[-4:] if len(phone) >= 4 else phone
+
+
+def mask_phone(phone: str) -> str:
+    """
+    Маскирует номер телефона для безопасного логирования.
+
+    Пример: +79991234567 -> ****4567
+
+    Args:
+        phone: Номер телефона
+
+    Returns:
+        Замаскированный номер
+    """
+    if not phone:
+        return "****"
+    last4 = phone[-4:] if len(phone) >= 4 else phone
+    return f"****{last4}"

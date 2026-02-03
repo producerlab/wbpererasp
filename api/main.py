@@ -24,12 +24,34 @@ app = FastAPI(
 )
 
 # CORS для Mini App
-# Telegram может открывать Mini App с разных доменов
+# Ограничиваем домены для безопасности, но разрешаем Telegram
+def get_cors_origins():
+    """Получает список разрешённых origins для CORS"""
+    origins = [
+        "https://web.telegram.org",
+        "https://t.me",
+        "https://telegram.org",
+    ]
+    # Добавляем WEBAPP_URL если указан
+    if Config.WEBAPP_URL:
+        origins.append(Config.WEBAPP_URL.rstrip('/'))
+        # Также добавляем без протокола для совместимости
+        if Config.WEBAPP_URL.startswith("https://"):
+            origins.append(Config.WEBAPP_URL.replace("https://", "http://"))
+    # Для локальной разработки
+    origins.extend([
+        "http://localhost:3000",
+        "http://localhost:8000",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:8000",
+    ])
+    return origins
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Mini Apps нужен доступ отовсюду
-    allow_credentials=False,  # Нельзя использовать credentials с wildcard
-    allow_methods=["*"],
+    allow_origins=get_cors_origins(),
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
     allow_headers=["*"],
 )
 
