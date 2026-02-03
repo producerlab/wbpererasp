@@ -79,9 +79,12 @@ class WBRedistributionService:
 
     async def _get_browser(self) -> BrowserService:
         """Получить browser service - всегда создаём новый для избежания проблем с event loop"""
-        # Не используем кеширование из-за проблем с разными event loops
+        # Не используем кеширование/singleton из-за проблем с разными event loops
         # (FastAPI vs Playwright могут работать в разных loops)
-        return await get_browser_service(headless=True)
+        # Создаём новый instance напрямую
+        service = BrowserService(headless=True)
+        await service.start()
+        return service
 
     async def execute_redistribution(
         self,
@@ -172,6 +175,8 @@ class WBRedistributionService:
         finally:
             if context:
                 await context.close()
+            if browser:
+                await browser.stop()
 
     async def _search_article(
         self,
@@ -446,7 +451,8 @@ class WBRedistributionService:
         finally:
             if context:
                 await context.close()
-
+            if browser:
+                await browser.stop()
 
     async def search_product_via_modal(
         self,
@@ -648,6 +654,8 @@ class WBRedistributionService:
         finally:
             if context:
                 await context.close()
+            if browser:
+                await browser.stop()
 
     async def get_warehouse_stocks(
         self,
@@ -761,6 +769,9 @@ class WBRedistributionService:
         finally:
             if context:
                 await context.close()
+            # Останавливаем браузер, чтобы избежать утечки ресурсов
+            if browser:
+                await browser.stop()
 
     async def _parse_stocks_table(self, page: Page) -> list:
         """Парсит таблицу остатков со страницы"""
