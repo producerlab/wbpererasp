@@ -401,3 +401,14 @@ class DatabasePostgres:
                 WHERE id = %s
             ''', (status, session_id))
             return cursor.rowcount > 0
+
+    def invalidate_browser_session(self, user_id: int) -> bool:
+        """Деактивирует все сессии пользователя"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE browser_sessions
+                SET status = 'inactive'
+                WHERE user_id = %s AND status = 'active'
+            ''', (user_id,))
+            return cursor.rowcount > 0
