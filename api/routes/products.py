@@ -109,11 +109,9 @@ async def get_warehouse_remains_via_api(cookies_encrypted: str) -> List[Dict]:
                                 return [data]
 
                     elif response.status == 401:
-                        logger.warning(f"Session expired (401) from {endpoint}")
-                        raise HTTPException(
-                            status_code=401,
-                            detail="session_expired"
-                        )
+                        logger.warning(f"Session expired (401) from {endpoint}, will try fallback")
+                        # Не выбрасываем exception - даём шанс Playwright fallback
+                        return []
                     elif response.status == 403:
                         logger.warning(f"Access denied (403) from {endpoint}")
                         continue
