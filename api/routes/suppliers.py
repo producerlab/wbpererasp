@@ -77,11 +77,11 @@ async def get_suppliers(
             )
             logger.info(f"[GET /suppliers] Created admin token_id={token_id}")
 
-            # Создаем несколько тестовых suppliers
+            # Создаем несколько тестовых suppliers (ФИО владельцев)
             mock_suppliers = [
-                "EALY PERFUMES (ИНН: 781434518365)",
-                "FitSmile (ИНН: 246522599123)",
-                "ООО Торговый Дом (DEMO)"
+                "Хоснуллин Роман Аликович ИП (ИНН: 781434518365)",
+                "Яковлев Вячеслав Валерьевич (ИНН: 246522599123)",
+                "Колосов Глеб Андреевич (ИНН: 781436273350)"
             ]
 
             for i, supplier_name in enumerate(mock_suppliers):

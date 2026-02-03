@@ -373,8 +373,8 @@ async def _handle_code_result(message: Message, state: FSMContext, session, phon
 
             for i, profile in enumerate(session.available_profiles):
                 try:
-                    # Название supplier - имя профиля или компания
-                    supplier_name = profile.get('company') or profile.get('name') or f"Кабинет {phone[-4:]}"
+                    # Название supplier - ФИО владельца (приоритет) или компания
+                    supplier_name = profile.get('name') or profile.get('company') or f"Кабинет {phone[-4:]}"
 
                     # Добавляем ИНН если есть
                     if profile.get('inn'):

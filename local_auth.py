@@ -128,7 +128,7 @@ async def main():
             print(f"👥 Найдено поставщиков: {len(result.available_profiles)}")
             print()
             for i, profile in enumerate(result.available_profiles, 1):
-                name = profile.get('company') or profile.get('name', 'N/A')
+                name = profile.get('name') or profile.get('company', 'N/A')
                 inn = profile.get('inn', '')
                 is_active = "🟢 активный" if profile.get('is_active') else ""
                 print(f"   {i}. {name} {f'(ИНН: {inn})' if inn else ''} {is_active}")
@@ -147,7 +147,7 @@ async def main():
         supplier_name = None
         if result.available_profiles:
             first_profile = result.available_profiles[0]
-            supplier_name = first_profile.get('company') or first_profile.get('name')
+            supplier_name = first_profile.get('name') or first_profile.get('company')
             if first_profile.get('inn'):
                 supplier_name = f"{supplier_name} (ИНН: {first_profile['inn']})"
 
@@ -172,7 +172,7 @@ async def main():
         suppliers_created = 0
         if result.available_profiles:
             for i, profile in enumerate(result.available_profiles):
-                profile_name = profile.get('company') or profile.get('name')
+                profile_name = profile.get('name') or profile.get('company')
                 if profile.get('inn'):
                     profile_name = f"{profile_name} (ИНН: {profile['inn']})"
 
