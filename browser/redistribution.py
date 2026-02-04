@@ -769,10 +769,17 @@ class WBRedistributionService:
                                 logger.info(f"  Key '{key}' contains dict with keys: {list(val.keys())[:5]}")
                                 # Проверяем вложенные данные в словаре
                                 for nested_key in ['table', 'items', 'rows', 'data', 'content', 'list', 'results']:
-                                    if nested_key in val and isinstance(val[nested_key], list):
-                                        if len(val[nested_key]) > 0:
-                                            logger.info(f"✅ Found stock data in nested '{key}.{nested_key}' from {url[:60]}")
-                                            return val[nested_key]
+                                    if nested_key in val:
+                                        nested_val = val[nested_key]
+                                        if isinstance(nested_val, list):
+                                            logger.info(f"    Nested '{key}.{nested_key}' is list with {len(nested_val)} items")
+                                            if len(nested_val) > 0:
+                                                logger.info(f"✅ Found stock data in nested '{key}.{nested_key}' from {url[:60]}")
+                                                return nested_val
+                                        elif isinstance(nested_val, dict):
+                                            logger.info(f"    Nested '{key}.{nested_key}' is dict with keys: {list(nested_val.keys())[:5]}")
+                                        else:
+                                            logger.info(f"    Nested '{key}.{nested_key}' is {type(nested_val).__name__}: {str(nested_val)[:100]}")
 
             # Fallback: любые данные с nmId
             for item in captured_data:
