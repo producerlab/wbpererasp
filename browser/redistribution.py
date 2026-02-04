@@ -659,13 +659,15 @@ class WBRedistributionService:
 
     async def get_warehouse_stocks(
         self,
-        cookies_encrypted: str
+        cookies_encrypted: str,
+        query: Optional[str] = None
     ) -> list:
         """
         Получить все остатки из таблицы на странице warehouse-remains.
 
         Args:
             cookies_encrypted: Зашифрованные cookies
+            query: Опциональный артикул для поиска (фильтрует результаты)
 
         Returns:
             Список товаров с остатками
@@ -713,6 +715,42 @@ class WBRedistributionService:
             if '/login' in current_url or '/auth' in current_url or 'passport' in current_url:
                 logger.error(f"Session expired - redirected to login: {current_url}")
                 return []
+
+            # Если указан query, вводим его в поле поиска
+            if query:
+                logger.info(f"Searching for product: {query}")
+                search_selectors = [
+                    'input[placeholder*="Поиск"]',
+                    'input[placeholder*="поиск"]',
+                    'input[placeholder*="Артикул"]',
+                    'input[placeholder*="артикул"]',
+                    'input[placeholder*="nmId"]',
+                    'input[type="search"]',
+                    '[class*="search"] input',
+                    '[class*="Search"] input',
+                ]
+
+                search_found = False
+                for selector in search_selectors:
+                    try:
+                        search_input = await page.query_selector(selector)
+                        if search_input and await search_input.is_visible():
+                            logger.info(f"Found search input: {selector}")
+                            await search_input.click()
+                            await browser.human_delay(200, 400)
+                            await search_input.fill(query)
+                            await browser.human_delay(500, 800)
+                            # Нажимаем Enter для поиска
+                            await page.keyboard.press('Enter')
+                            logger.info(f"Entered search query: {query}")
+                            search_found = True
+                            break
+                    except Exception as e:
+                        logger.debug(f"Selector {selector} failed: {e}")
+                        continue
+
+                if not search_found:
+                    logger.warning("Search input not found on page, loading without filter")
 
             # Ждём загрузки данных - даём больше времени
             await browser.human_delay(3000, 4000)

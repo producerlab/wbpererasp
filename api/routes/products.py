@@ -263,7 +263,8 @@ async def search_product(
                 from browser.redistribution import WBRedistributionService
                 # Создаём новый instance для каждого запроса (избегаем проблем с event loop)
                 service = WBRedistributionService()
-                remains = await service.get_warehouse_stocks(cookies_encrypted)
+                # Передаём nm_id как query для фильтрации на странице
+                remains = await service.get_warehouse_stocks(cookies_encrypted, query=str(nm_id))
                 if remains:
                     logger.info(f"Got {len(remains)} items via Playwright")
             except Exception as e:
