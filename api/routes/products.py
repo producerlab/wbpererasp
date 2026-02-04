@@ -256,19 +256,21 @@ async def search_product(
         # Сначала пробуем через HTTP API
         remains = await get_warehouse_remains_via_api(cookies_encrypted)
 
-        # Если HTTP не сработал, пробуем через Playwright (перехват API)
+        # Если HTTP не сработал, пробуем через Playwright (перехват API из модалки)
         if not remains:
-            logger.info("HTTP API failed, trying Playwright fallback...")
+            logger.info("HTTP API failed, trying Playwright modal search fallback...")
             try:
                 from browser.redistribution import WBRedistributionService
                 # Создаём новый instance для каждого запроса (избегаем проблем с event loop)
                 service = WBRedistributionService()
-                # Передаём nm_id как query для фильтрации на странице
-                remains = await service.get_warehouse_stocks(cookies_encrypted, query=str(nm_id))
+                # Используем поиск через модальное окно "Перераспределить остатки"
+                # Передаём только первые 3-4 цифры артикула для автокомплита
+                search_query = str(nm_id)[:4] if len(str(nm_id)) > 3 else str(nm_id)
+                remains = await service.search_product_via_modal(cookies_encrypted, query=search_query)
                 if remains:
-                    logger.info(f"Got {len(remains)} items via Playwright")
+                    logger.info(f"Got {len(remains)} items via Playwright modal search")
             except Exception as e:
-                logger.warning(f"Playwright fallback failed: {e}", exc_info=True)
+                logger.warning(f"Playwright modal search failed: {e}", exc_info=True)
 
         if not remains:
             logger.warning("No remains data received from any source")

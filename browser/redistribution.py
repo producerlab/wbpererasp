@@ -483,6 +483,24 @@ class WBRedistributionService:
             context = await browser.create_context(cookies=cookies)
             page = await browser.create_page(context)
 
+            # Перехватываем API ответы (особенно autocomplete)
+            captured_data = []
+
+            async def capture_response(response):
+                url = response.url
+                # Перехватываем все JSON API от wildberries
+                if response.status == 200 and 'wildberries' in url:
+                    content_type = response.headers.get('content-type', '')
+                    if 'json' in content_type or '/api/' in url or '/ns/' in url:
+                        try:
+                            data = await response.json()
+                            captured_data.append({'url': url, 'data': data})
+                            logger.info(f"📡 Captured API: {url[:100]}")
+                        except Exception as e:
+                            pass  # Не все ответы JSON
+
+            page.on('response', capture_response)
+
             # Открываем страницу остатков
             logger.info(f"Opening {self.STOCKS_URL} for product search")
             await page.goto(self.STOCKS_URL, wait_until='networkidle', timeout=30000)
@@ -595,53 +613,47 @@ class WBRedistributionService:
             await input_field.click()
             await browser.human_delay(200, 400)
             await input_field.fill(query)
-            await browser.human_delay(1500, 2500)  # Ждем autocomplete
+            logger.info(f"Entered query '{query}' in modal input")
+            await browser.human_delay(2000, 3000)  # Ждем autocomplete API
 
-            # Парсим результаты autocomplete
-            results = []
-            suggestion_selectors = [
-                '[class*="option"]',
-                '[class*="suggestion"]',
-                '[class*="autocomplete"] li',
-                '[role="option"]',
-                '[class*="dropdown"] [class*="item"]',
-                '[class*="listbox"] > div',
-            ]
+            # Анализируем перехваченные API
+            logger.info(f"Captured {len(captured_data)} APIs after entering query")
 
-            for selector in suggestion_selectors:
-                try:
-                    suggestions = await page.query_selector_all(selector)
-                    if suggestions:
-                        logger.info(f"Found {len(suggestions)} suggestions with {selector}")
-                        for suggestion in suggestions:
-                            try:
-                                text = await suggestion.inner_text()
-                                text = text.strip()
-                                if text and text != query:
-                                    # Пробуем извлечь nmId
-                                    parts = text.split()
-                                    if parts:
-                                        try:
-                                            nm_id = int(parts[0])
-                                            name = ' '.join(parts[1:]) if len(parts) > 1 else ''
-                                            results.append({
-                                                'nmId': nm_id,
-                                                'name': name,
-                                                'text': text
-                                            })
-                                        except ValueError:
-                                            # Первая часть не число
-                                            results.append({
-                                                'text': text
-                                            })
-                            except:
-                                continue
-                        break
-                except:
-                    continue
+            # Ищем API с данными автокомплита или остатками
+            for item in captured_data:
+                url = item['url']
+                data = item['data']
 
-            logger.info(f"Search returned {len(results)} results for '{query}'")
-            return results
+                # Логируем все API для отладки
+                logger.info(f"API: {url[:120]}")
+                if isinstance(data, dict):
+                    logger.info(f"  Keys: {list(data.keys())[:10]}")
+                elif isinstance(data, list):
+                    logger.info(f"  List with {len(data)} items")
+
+                # Проверяем разные варианты структуры ответа
+                if isinstance(data, list) and len(data) > 0:
+                    # Прямой список товаров
+                    logger.info(f"✅ Found product list with {len(data)} items from API")
+                    return data
+                elif isinstance(data, dict):
+                    # Проверяем вложенные структуры
+                    for key in ['data', 'items', 'result', 'results', 'products', 'suggestions']:
+                        if key in data:
+                            val = data[key]
+                            if isinstance(val, list) and len(val) > 0:
+                                logger.info(f"✅ Found {len(val)} products in '{key}' from API")
+                                return val
+                            elif isinstance(val, dict):
+                                # Проверяем вложенные списки в dict
+                                for nested_key in ['table', 'items', 'rows', 'list']:
+                                    if nested_key in val and isinstance(val[nested_key], list):
+                                        if len(val[nested_key]) > 0:
+                                            logger.info(f"✅ Found {len(val[nested_key])} products in '{key}.{nested_key}' from API")
+                                            return val[nested_key]
+
+            logger.warning(f"No product data found in captured APIs for query '{query}'")
+            return []
 
         except PlaywrightTimeout as e:
             logger.error(f"Timeout during product search: {e}")
