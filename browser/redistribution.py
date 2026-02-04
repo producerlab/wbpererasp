@@ -17,7 +17,7 @@ from typing import Optional
 from playwright.async_api import BrowserContext, Page, TimeoutError as PlaywrightTimeout
 
 from .browser_service import BrowserService, get_browser_service
-from utils.encryption import decrypt_token
+from utils.encryption import decrypt_token, encrypt_token
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +49,7 @@ class WBRedistributionService:
     # Правильный URL - страница остатков на складе с кнопкой "Перераспределить остатки"
     REDISTRIBUTION_URL = "https://seller.wildberries.ru/analytics-reports/warehouse-remains"
     STOCKS_URL = "https://seller.wildberries.ru/analytics-reports/warehouse-remains"
+    MAIN_PAGE_URL = "https://seller.wildberries.ru/"  # Главная страница для обновления сессии
 
     # Селекторы элементов
     SELECTORS = {
@@ -85,6 +86,64 @@ class WBRedistributionService:
         service = BrowserService(headless=True)
         await service.start()
         return service
+
+    async def refresh_session(
+        self,
+        cookies_encrypted: str
+    ) -> Optional[str]:
+        """
+        Попытка обновить сессию без SMS.
+
+        Открывает главную страницу WB с существующими cookies.
+        Если авторизация всё ещё валидна, WB может обновить cookies.
+
+        Args:
+            cookies_encrypted: Текущие зашифрованные cookies
+
+        Returns:
+            Новые зашифрованные cookies если успешно, None если сессия истекла
+        """
+        browser = await self._get_browser()
+        context: Optional[BrowserContext] = None
+        page: Optional[Page] = None
+
+        try:
+            cookies_json = decrypt_token(cookies_encrypted)
+            cookies = browser.deserialize_cookies(cookies_json)
+
+            context = await browser.create_context(cookies=cookies)
+            page = await browser.create_page(context)
+
+            # Открываем главную страницу (не требовательную)
+            logger.info(f"Attempting to refresh session by opening {self.MAIN_PAGE_URL}")
+            await page.goto(self.MAIN_PAGE_URL, wait_until='domcontentloaded', timeout=30000)
+            await browser.human_delay(2000, 3000)
+
+            # Проверяем URL после навигации
+            current_url = page.url
+            logger.info(f"Current URL after refresh attempt: {current_url}")
+
+            # Если редирект на логин - сессия истекла
+            if '/login' in current_url or '/auth' in current_url or 'passport' in current_url:
+                logger.warning("Session expired, refresh failed - need full re-authentication")
+                return None
+
+            # Сессия валидна! Сохраняем обновлённые cookies
+            logger.info("Session still valid, extracting updated cookies")
+            new_cookies = await context.cookies()
+            new_cookies_json = browser.serialize_cookies(new_cookies)
+            new_cookies_encrypted = encrypt_token(new_cookies_json)
+
+            logger.info(f"Session refreshed successfully, extracted {len(new_cookies)} cookies")
+            return new_cookies_encrypted
+
+        except Exception as e:
+            logger.error(f"Error refreshing session: {e}", exc_info=True)
+            return None
+
+        finally:
+            if browser:
+                await browser.stop()
 
     async def execute_redistribution(
         self,
