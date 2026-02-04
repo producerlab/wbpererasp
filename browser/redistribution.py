@@ -767,6 +767,12 @@ class WBRedistributionService:
                                     return val
                             elif isinstance(val, dict):
                                 logger.info(f"  Key '{key}' contains dict with keys: {list(val.keys())[:5]}")
+                                # Проверяем вложенные данные в словаре
+                                for nested_key in ['table', 'items', 'rows', 'data', 'content', 'list', 'results']:
+                                    if nested_key in val and isinstance(val[nested_key], list):
+                                        if len(val[nested_key]) > 0:
+                                            logger.info(f"✅ Found stock data in nested '{key}.{nested_key}' from {url[:60]}")
+                                            return val[nested_key]
 
             # Fallback: любые данные с nmId
             for item in captured_data:
