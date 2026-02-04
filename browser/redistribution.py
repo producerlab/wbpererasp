@@ -517,6 +517,84 @@ class WBRedistributionService:
                 logger.info(f"Session expired screenshot saved to {screenshot_path}")
                 return []
 
+            # ОБЯЗАТЕЛЬНО: Настраиваем таблицу (включаем "Артикул WB")
+            # Таблица по умолчанию открывается без артикулов
+            logger.info("Configuring table to show article numbers...")
+            try:
+                # Ищем кнопку "Настройка таблицы"
+                table_settings_selectors = [
+                    'text=Настройка таблицы',
+                    'button:has-text("Настройка")',
+                    '[class*="settings"]',
+                    '[title*="Настройка"]',
+                ]
+
+                settings_btn = None
+                for selector in table_settings_selectors:
+                    try:
+                        settings_btn = await page.query_selector(selector)
+                        if settings_btn and await settings_btn.is_visible():
+                            logger.info(f"Found table settings button: {selector}")
+                            break
+                    except:
+                        continue
+
+                if settings_btn:
+                    await settings_btn.click()
+                    await browser.human_delay(800, 1200)
+
+                    # Ищем чекбокс "Артикул WB"
+                    # В модалке настроек ищем текст и чекбокс рядом
+                    article_checkbox_selectors = [
+                        'text=Артикул WB',
+                        'label:has-text("Артикул WB")',
+                        'input[type="checkbox"]:near(text="Артикул WB")',
+                    ]
+
+                    # Пробуем найти и кликнуть чекбокс
+                    checkbox_clicked = False
+                    for selector in article_checkbox_selectors:
+                        try:
+                            element = await page.query_selector(selector)
+                            if element:
+                                # Если это label/text, ищем чекбокс рядом
+                                if 'text=' in selector or 'label' in selector:
+                                    # Кликаем по label, он активирует чекбокс
+                                    await element.click()
+                                else:
+                                    # Это сам чекбокс
+                                    await element.click()
+                                logger.info(f"Enabled 'Артикул WB' checkbox")
+                                checkbox_clicked = True
+                                break
+                        except:
+                            continue
+
+                    await browser.human_delay(500, 800)
+
+                    # Нажимаем "Сохранить"
+                    save_selectors = [
+                        'text=Сохранить',
+                        'button:has-text("Сохранить")',
+                        '[class*="save"]',
+                    ]
+
+                    for selector in save_selectors:
+                        try:
+                            save_btn = await page.query_selector(selector)
+                            if save_btn and await save_btn.is_visible():
+                                await save_btn.click()
+                                logger.info("Saved table settings")
+                                await browser.human_delay(1000, 1500)
+                                break
+                        except:
+                            continue
+                else:
+                    logger.warning("Table settings button not found, proceeding anyway")
+            except Exception as e:
+                logger.warning(f"Failed to configure table: {e}")
+                # Продолжаем даже если не получилось настроить таблицу
+
             # Кликаем кнопку "Перераспределить остатки"
             redistribute_btn = None
             selectors_to_try = [
