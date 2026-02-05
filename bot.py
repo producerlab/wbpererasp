@@ -21,6 +21,7 @@ from config import Config
 from db_factory import get_database
 from handlers import redistribution_router, browser_auth_router
 from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 
 # Настройка логирования
 logging.basicConfig(
@@ -75,6 +76,10 @@ async def cmd_start(message: Message, state: FSMContext):
                         web_app=WebAppInfo(url=full_url)
                     )],
                     [InlineKeyboardButton(
+                        text="📥 Импорт cookies",
+                        callback_data="import_cookies"
+                    )],
+                    [InlineKeyboardButton(
                         text="🔄 Войти заново",
                         callback_data="reauth"
                     )]
@@ -122,6 +127,10 @@ async def cmd_start(message: Message, state: FSMContext):
                     [InlineKeyboardButton(
                         text="🔃 Обновить профили",
                         callback_data="refresh_profiles"
+                    )],
+                    [InlineKeyboardButton(
+                        text="📥 Импорт cookies",
+                        callback_data="import_cookies"
                     )],
                     [InlineKeyboardButton(
                         text="🔄 Войти заново",
@@ -222,6 +231,11 @@ async def cmd_stats(message: Message):
     )
 
 
+class CookieImportStates(StatesGroup):
+    """Состояния для импорта cookies"""
+    waiting_cookies = State()
+
+
 async def callback_reauth(callback: CallbackQuery, state: FSMContext):
     """Callback для кнопки 'Войти заново'"""
     user_id = callback.from_user.id
@@ -243,6 +257,144 @@ async def callback_reauth(callback: CallbackQuery, state: FSMContext):
     # Устанавливаем состояние ожидания телефона
     await state.set_state(AuthStates.waiting_phone)
     await callback.answer()
+
+
+async def callback_import_cookies(callback: CallbackQuery, state: FSMContext):
+    """Callback для кнопки 'Импорт cookies'"""
+    await callback.message.edit_text(
+        "📥 <b>Импорт cookies из браузера</b>\n\n"
+        "1. Зайдите на <code>seller.wildberries.ru</code> в браузере\n"
+        "2. Убедитесь что вы залогинены\n"
+        "3. Установите расширение Cookie-Editor:\n"
+        "   • Chrome: https://chromewebstore.google.com/detail/cookie-editor/hlkenndednhfkekhgcdicdfddnkalmdm\n"
+        "   • Firefox: https://addons.mozilla.org/firefox/addon/cookie-editor/\n"
+        "4. Кликните на иконку расширения\n"
+        "5. Нажмите кнопку Export (📋)\n"
+        "6. Скопируйте JSON\n"
+        "7. Отправьте JSON мне в этот чат\n\n"
+        "⚠️ <b>Важно:</b> JSON должен начинаться с <code>[</code> и заканчиваться <code>]</code>\n\n"
+        "Пример формата:\n"
+        "<code>[{\"name\":\"cookie1\",...}]</code>",
+        parse_mode=ParseMode.HTML
+    )
+
+    # Устанавливаем состояние ожидания cookies
+    await state.set_state(CookieImportStates.waiting_cookies)
+    await callback.answer()
+
+
+async def handle_cookies_json(message: Message, state: FSMContext):
+    """Обработка JSON с cookies"""
+    user_id = message.from_user.id
+
+    try:
+        import json
+        from api.routes.sessions import CookieItem
+
+        # Парсим JSON
+        cookies_data = json.loads(message.text)
+
+        if not isinstance(cookies_data, list):
+            await message.answer(
+                "❌ Неверный формат! JSON должен быть массивом cookies.\n\n"
+                "Ожидается: <code>[{...}, {...}]</code>",
+                parse_mode=ParseMode.HTML
+            )
+            return
+
+        # Преобразуем в наш формат
+        cookies = []
+        for cookie in cookies_data:
+            try:
+                cookies.append(CookieItem(
+                    name=cookie.get('name', ''),
+                    value=cookie.get('value', ''),
+                    domain=cookie.get('domain', ''),
+                    path=cookie.get('path', '/'),
+                    expires=cookie.get('expirationDate'),
+                    httpOnly=cookie.get('httpOnly', False),
+                    secure=cookie.get('secure', False),
+                    sameSite=cookie.get('sameSite')
+                ))
+            except Exception as e:
+                logger.warning(f"Failed to parse cookie: {e}")
+                continue
+
+        if not cookies:
+            await message.answer("❌ Не удалось распарсить cookies из JSON")
+            return
+
+        # Фильтруем только wildberries cookies
+        wb_cookies = [c for c in cookies if 'wildberries' in c.domain.lower()]
+
+        if not wb_cookies:
+            await message.answer(
+                "❌ В предоставленных cookies нет Wildberries cookies!\n\n"
+                "Убедитесь что вы экспортировали cookies со страницы <code>seller.wildberries.ru</code>",
+                parse_mode=ParseMode.HTML
+            )
+            return
+
+        # Импортируем cookies
+        from utils.encryption import encrypt_token
+        cookies_json = json.dumps([c.dict() for c in wb_cookies])
+
+        # Преобразуем в формат Playwright
+        playwright_cookies = []
+        for c in wb_cookies:
+            playwright_cookies.append({
+                'name': c.name,
+                'value': c.value,
+                'domain': c.domain,
+                'path': c.path,
+                'expires': c.expires if c.expires else -1,
+                'httpOnly': c.httpOnly,
+                'secure': c.secure,
+                'sameSite': c.sameSite if c.sameSite else 'Lax'
+            })
+
+        cookies_encrypted = encrypt_token(json.dumps(playwright_cookies))
+
+        # Сохраняем в БД
+        session = db.get_browser_session(user_id)
+        if session:
+            db.update_browser_session(
+                user_id=user_id,
+                cookies_encrypted=cookies_encrypted,
+                expires_days=7
+            )
+        else:
+            db.save_browser_session(
+                user_id=user_id,
+                cookies_encrypted=cookies_encrypted,
+                expires_days=7
+            )
+
+        await message.answer(
+            f"✅ <b>Cookies импортированы успешно!</b>\n\n"
+            f"📊 Импортировано: {len(wb_cookies)} cookies\n"
+            f"⏰ Срок действия: 7 дней\n\n"
+            f"Теперь можете использовать бота без SMS авторизации!",
+            parse_mode=ParseMode.HTML
+        )
+
+        # Очищаем состояние
+        await state.clear()
+
+    except json.JSONDecodeError:
+        await message.answer(
+            "❌ Неверный JSON формат!\n\n"
+            "Убедитесь что вы скопировали весь текст из Cookie-Editor.\n"
+            "JSON должен начинаться с <code>[</code> и заканчиваться <code>]</code>",
+            parse_mode=ParseMode.HTML
+        )
+    except Exception as e:
+        logger.error(f"Error importing cookies: {e}", exc_info=True)
+        await message.answer(
+            f"❌ Ошибка при импорте cookies:\n<code>{str(e)}</code>",
+            parse_mode=ParseMode.HTML
+        )
+        await state.clear()
 
 
 async def main():
@@ -279,6 +431,10 @@ async def main():
 
     # Регистрация callback handlers
     dp.callback_query.register(callback_reauth, F.data == "reauth")
+    dp.callback_query.register(callback_import_cookies, F.data == "import_cookies")
+
+    # Регистрация обработчика cookies JSON (только в состоянии waiting_cookies)
+    dp.message.register(handle_cookies_json, CookieImportStates.waiting_cookies)
 
     # Подключение роутеров
     dp.include_router(redistribution_router)
