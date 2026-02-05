@@ -161,8 +161,16 @@ async def cmd_start(message: Message, state: FSMContext):
                 )
                 logger.info(f"[START] User {user_id} - sent authorized message (no HTTPS)")
         else:
-            # Если сессии нет - запускаем SMS авторизацию
+            # Если сессии нет - показываем варианты авторизации
             from handlers.browser_auth import AuthStates
+
+            # Кнопка для импорта cookies
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="📧 Импорт cookies из браузера",
+                    callback_data="import_cookies"
+                )]
+            ])
 
             await message.answer(
                 f"👋 <b>Добро пожаловать в WB Redistribution Bot!</b>\n\n"
@@ -174,14 +182,18 @@ async def cmd_start(message: Message, state: FSMContext):
                 f"• Мы НЕ храним ваш пароль — только одноразовый SMS-код\n"
                 f"• Сессия привязана только к вашему Telegram\n"
                 f"• Вы можете выйти в любой момент командой /logout\n\n"
+                f"<b>Способы авторизации:</b>\n"
+                f"1️⃣ <b>SMS авторизация</b> - отправьте номер телефона в формате:\n"
+                f"   <code>+79991234567</code> или <code>89991234567</code>\n\n"
+                f"2️⃣ <b>Импорт cookies</b> - авторизуйтесь в браузере и импортируйте cookies\n"
+                f"   (используйте кнопку ниже)\n\n"
                 f"💡 <b>Совет:</b> Можете использовать номер менеджера или отдельную SIM-карту — "
                 f"так ваш основной номер останется в стороне.\n\n"
-                f"📱 <b>Отправьте номер телефона</b> в формате:\n"
-                f"<code>+79991234567</code> или <code>89991234567</code>\n\n"
                 f"⚠️ SMS придёт от <b>Wildberries</b>",
+                reply_markup=keyboard,
                 parse_mode=ParseMode.HTML
             )
-            logger.info(f"[START] User {user_id} - sent welcome message, waiting for phone")
+            logger.info(f"[START] User {user_id} - sent welcome message with import_cookies button")
 
             # Устанавливаем состояние ожидания телефона
             await state.set_state(AuthStates.waiting_phone)
