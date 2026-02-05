@@ -342,15 +342,20 @@ async def handle_cookies_json(message: Message, state: FSMContext):
         # Преобразуем в формат Playwright
         playwright_cookies = []
         for c in wb_cookies:
+            # Валидируем sameSite - Playwright требует строго Strict|Lax|None
+            same_site = c.sameSite
+            if same_site not in ['Strict', 'Lax', 'None']:
+                same_site = 'Lax'  # По умолчанию
+
             playwright_cookies.append({
                 'name': c.name,
                 'value': c.value,
                 'domain': c.domain,
                 'path': c.path,
                 'expires': c.expires if c.expires else -1,
-                'httpOnly': c.httpOnly,
-                'secure': c.secure,
-                'sameSite': c.sameSite if c.sameSite else 'Lax'
+                'httpOnly': c.httpOnly if c.httpOnly is not None else False,
+                'secure': c.secure if c.secure is not None else False,
+                'sameSite': same_site
             })
 
         cookies_encrypted = encrypt_token(json.dumps(playwright_cookies))

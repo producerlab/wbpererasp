@@ -64,6 +64,11 @@ async def import_cookies_from_browser(
         wb_cookies = []
         for cookie in request.cookies:
             if 'wildberries' in cookie.domain.lower():
+                # Валидируем sameSite - Playwright требует строго Strict|Lax|None
+                same_site = cookie.sameSite
+                if same_site not in ['Strict', 'Lax', 'None']:
+                    same_site = 'Lax'  # По умолчанию
+
                 # Преобразуем в формат Playwright
                 wb_cookies.append({
                     'name': cookie.name,
@@ -73,7 +78,7 @@ async def import_cookies_from_browser(
                     'expires': cookie.expires if cookie.expires else -1,
                     'httpOnly': cookie.httpOnly if cookie.httpOnly is not None else False,
                     'secure': cookie.secure if cookie.secure is not None else False,
-                    'sameSite': cookie.sameSite if cookie.sameSite else 'Lax'
+                    'sameSite': same_site
                 })
 
         if not wb_cookies:
