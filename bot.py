@@ -303,8 +303,50 @@ async def handle_cookies_json(message: Message, state: FSMContext):
         import json
         from api.routes.sessions import CookieItem
 
+        # Получаем JSON из текста или файла
+        json_text = None
+
+        if message.document:
+            # Проверяем расширение файла
+            file_name = message.document.file_name or ""
+            allowed_extensions = ['.json', '.txt', '.md']
+
+            if not any(file_name.endswith(ext) for ext in allowed_extensions):
+                await message.answer(
+                    f"❌ Неподдерживаемый формат файла: <code>{file_name}</code>\n\n"
+                    f"Поддерживаются: .json, .txt, .md",
+                    parse_mode=ParseMode.HTML
+                )
+                return
+
+            # Скачиваем и читаем файл
+            try:
+                from aiogram import Bot
+                bot = message.bot
+                file = await bot.get_file(message.document.file_id)
+                file_content = await bot.download_file(file.file_path)
+                json_text = file_content.read().decode('utf-8')
+                logger.info(f"Downloaded cookies file: {file_name} ({len(json_text)} bytes)")
+            except Exception as e:
+                logger.error(f"Failed to download file: {e}")
+                await message.answer(
+                    f"❌ Ошибка при чтении файла: {str(e)}\n\n"
+                    f"Попробуйте отправить cookies как текст.",
+                    parse_mode=ParseMode.HTML
+                )
+                return
+        else:
+            # Читаем из текста сообщения
+            json_text = message.text
+
+        if not json_text:
+            await message.answer(
+                "❌ Не удалось получить данные. Отправьте JSON как текст или файл (.json, .txt, .md)"
+            )
+            return
+
         # Парсим JSON
-        cookies_data = json.loads(message.text)
+        cookies_data = json.loads(json_text)
 
         if not isinstance(cookies_data, list):
             await message.answer(
