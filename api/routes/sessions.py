@@ -26,6 +26,7 @@ class CookieItem(BaseModel):
     domain: str
     path: str = "/"
     expires: Optional[float] = None
+    expirationDate: Optional[float] = None  # Cookie-Editor использует это поле вместо expires
     httpOnly: Optional[bool] = False
     secure: Optional[bool] = False
     sameSite: Optional[str] = "Lax"
@@ -69,13 +70,18 @@ async def import_cookies_from_browser(
                 if same_site not in ['Strict', 'Lax', 'None']:
                     same_site = 'Lax'  # По умолчанию
 
+                # Cookie-Editor использует expirationDate вместо expires
+                expires_value = cookie.expires if cookie.expires else cookie.expirationDate
+                if expires_value is None:
+                    expires_value = -1
+
                 # Преобразуем в формат Playwright
                 wb_cookies.append({
                     'name': cookie.name,
                     'value': cookie.value,
                     'domain': cookie.domain,
                     'path': cookie.path,
-                    'expires': cookie.expires if cookie.expires else -1,
+                    'expires': expires_value,
                     'httpOnly': cookie.httpOnly if cookie.httpOnly is not None else False,
                     'secure': cookie.secure if cookie.secure is not None else False,
                     'sameSite': same_site
