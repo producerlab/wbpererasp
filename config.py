@@ -18,9 +18,10 @@ class Config:
     """Конфигурация бота"""
 
     # ========== ENVIRONMENT ==========
-    # Определяем окружение: production (Railway) или development (локально)
+    # Определяем окружение: production (Railway) или development (локально/Railway)
+    # ВАЖНО: Переменная ENVIRONMENT должна быть явно установлена в Railway environment variables
     ENVIRONMENT: str = os.getenv('ENVIRONMENT', 'development')
-    IS_PRODUCTION: bool = ENVIRONMENT == 'production' or os.getenv('RAILWAY_ENVIRONMENT') is not None
+    IS_PRODUCTION: bool = ENVIRONMENT == 'production'
 
     # ========== TELEGRAM ==========
     # Два токена для разных окружений
