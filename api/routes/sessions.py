@@ -96,25 +96,18 @@ async def import_cookies_from_browser(
         cookies_json = json.dumps(wb_cookies)
         cookies_encrypted = encrypt_token(cookies_json)
 
-        # Получаем текущую сессию или создаём новую
-        session = db.get_browser_session(user_id)
-
-        if session:
-            # Обновляем существующую сессию
-            db.update_browser_session(
-                user_id=user_id,
-                cookies_encrypted=cookies_encrypted,
-                expires_days=7  # Ставим 7 дней как у WB
-            )
-            logger.info(f"Updated browser session for user {user_id}")
-        else:
-            # Создаём новую сессию
-            db.save_browser_session(
-                user_id=user_id,
-                cookies_encrypted=cookies_encrypted,
-                expires_days=7
-            )
-            logger.info(f"Created new browser session for user {user_id}")
+        # Сохраняем cookies в БД
+        # Сначала деактивируем старые сессии
+        db.invalidate_browser_session(user_id)
+        # Затем создаём новую сессию
+        db.add_browser_session(
+            user_id=user_id,
+            phone="",  # Телефон не требуется при импорте cookies
+            cookies_encrypted=cookies_encrypted,
+            supplier_name=None,
+            expires_days=7  # Ставим 7 дней как у WB
+        )
+        logger.info(f"Imported browser session for user {user_id}")
 
         return {
             "success": True,
@@ -173,9 +166,14 @@ async def refresh_session(
 
         if new_cookies_encrypted:
             # Обновляем сессию с новыми cookies
-            db.update_browser_session(
+            # Деактивируем старые сессии
+            db.invalidate_browser_session(user_id)
+            # Создаём новую с обновлёнными cookies
+            db.add_browser_session(
                 user_id=user_id,
+                phone="",
                 cookies_encrypted=new_cookies_encrypted,
+                supplier_name=None,
                 expires_days=7
             )
 

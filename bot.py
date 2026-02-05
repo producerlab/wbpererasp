@@ -356,19 +356,16 @@ async def handle_cookies_json(message: Message, state: FSMContext):
         cookies_encrypted = encrypt_token(json.dumps(playwright_cookies))
 
         # Сохраняем в БД
-        session = db.get_browser_session(user_id)
-        if session:
-            db.update_browser_session(
-                user_id=user_id,
-                cookies_encrypted=cookies_encrypted,
-                expires_days=7
-            )
-        else:
-            db.save_browser_session(
-                user_id=user_id,
-                cookies_encrypted=cookies_encrypted,
-                expires_days=7
-            )
+        # Сначала деактивируем старые сессии
+        db.invalidate_browser_session(user_id)
+        # Затем создаём новую сессию
+        db.add_browser_session(
+            user_id=user_id,
+            phone="",  # Телефон не требуется при импорте cookies
+            cookies_encrypted=cookies_encrypted,
+            supplier_name=None,
+            expires_days=7
+        )
 
         await message.answer(
             f"✅ <b>Cookies импортированы успешно!</b>\n\n"
