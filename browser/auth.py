@@ -719,6 +719,9 @@ class WBAuthService:
             # Закрываем промо-попапы (Джем, подписки и т.д.)
             await self._close_promo_popups(page)
 
+            # Ещё раз проверяем cookie баннер (может появиться после ввода кода)
+            await self._accept_cookie_banner(page)
+
             # Проверяем ошибки
             error = await self._check_error(page)
             if error:
@@ -1536,8 +1539,9 @@ class WBAuthService:
                 text = await error_element.inner_text()
                 # Фильтруем слишком короткие или бессмысленные сообщения
                 if text and len(text) > 5 and not text.startswith('+'):
-                    # Игнорируем промо-попапы (не ошибки)
-                    promo_keywords = ['джем', 'подписка', 'скидка', 'акция', 'бонус', 'premium', 'pro']
+                    # Игнорируем промо-попапы и cookie баннер (не ошибки)
+                    promo_keywords = ['джем', 'подписка', 'скидка', 'акция', 'бонус', 'premium', 'pro',
+                                     'cookie файлы', 'принимаю', 'обработку данных', 'пользуясь сайтом']
                     text_lower = text.lower()
                     if any(kw in text_lower for kw in promo_keywords):
                         logger.debug(f"Игнорируем промо-сообщение: {text[:50]}...")

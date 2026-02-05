@@ -17,8 +17,26 @@ load_dotenv(env_path)
 class Config:
     """Конфигурация бота"""
 
+    # ========== ENVIRONMENT ==========
+    # Определяем окружение: production (Railway) или development (локально)
+    ENVIRONMENT: str = os.getenv('ENVIRONMENT', 'development')
+    IS_PRODUCTION: bool = ENVIRONMENT == 'production' or os.getenv('RAILWAY_ENVIRONMENT') is not None
+
     # ========== TELEGRAM ==========
-    BOT_TOKEN: str = os.getenv('BOT_TOKEN', '')
+    # Два токена для разных окружений
+    BOT_TOKEN: str = os.getenv('BOT_TOKEN', '')  # Production token (Railway)
+    BOT_TOKEN_DEV: str = os.getenv('BOT_TOKEN_DEV', '')  # Development token (локально)
+
+    # Автоматический выбор токена в зависимости от окружения
+    @classmethod
+    def get_bot_token(cls) -> str:
+        """Возвращает активный токен в зависимости от окружения"""
+        if cls.IS_PRODUCTION:
+            return cls.BOT_TOKEN
+        else:
+            # В development используем DEV токен, если он есть, иначе fallback на обычный
+            return cls.BOT_TOKEN_DEV if cls.BOT_TOKEN_DEV else cls.BOT_TOKEN
+
     ADMIN_IDS: list = [
         int(x) for x in os.getenv('ADMIN_IDS', '').split(',')
         if x.strip().isdigit()
@@ -58,8 +76,13 @@ class Config:
         errors = []
         warnings = []
 
-        if not cls.BOT_TOKEN:
-            errors.append("BOT_TOKEN не задан")
+        # Проверяем активный токен (зависит от окружения)
+        active_token = cls.get_bot_token()
+        if not active_token:
+            if cls.IS_PRODUCTION:
+                errors.append("BOT_TOKEN (production) не задан")
+            else:
+                errors.append("BOT_TOKEN_DEV (development) не задан. Создайте dev бота через @BotFather или используйте BOT_TOKEN")
 
         # Критическая проверка encryption key
         if not cls.WB_ENCRYPTION_KEY:
@@ -98,8 +121,14 @@ class Config:
     @classmethod
     def get_summary(cls) -> str:
         """Возвращает сводку конфигурации"""
+        bot_mode = "Production" if cls.IS_PRODUCTION else "Development"
+        active_token = cls.get_bot_token()
+        token_preview = active_token[:10] + "..." if active_token else "НЕ ЗАДАН"
+
         return f"""
 === Конфигурация WB Redistribution Bot ===
+Окружение: {cls.ENVIRONMENT} ({bot_mode})
+Токен бота: {token_preview}
 Администраторов: {len(cls.ADMIN_IDS)}
 База данных: {cls.DATABASE_PATH}
 

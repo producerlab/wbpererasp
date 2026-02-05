@@ -31,10 +31,6 @@ WB_ENCRYPTION_KEY=your_same_encryption_key  # Same key for consistency
 # Database
 DATABASE_URL=  # Empty = use SQLite locally
 
-# WB API
-COEFFICIENT_POLL_INTERVAL=12
-NOTIFICATION_COOLDOWN_MINUTES=10
-ENABLE_MONITORING=true
 ```
 
 Оставьте `.env` для продакшена (Railway):

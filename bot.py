@@ -226,7 +226,7 @@ async def cmd_stats(message: Message):
         f"📊 <b>Статистика бота</b>\n\n"
         f"👥 Пользователей: {total_stats.get('total_users', 0)}\n"
         f"📝 Запросов: {total_stats.get('total_requests', 0)}\n\n"
-        f"<b>Мониторинг:</b> Отключен",
+        f"<b>Перераспределение:</b> Активно",
         parse_mode=ParseMode.HTML
     )
 
@@ -419,7 +419,7 @@ async def main():
 
     # Инициализация бота
     bot = Bot(
-        token=Config.BOT_TOKEN,
+        token=Config.get_bot_token(),
         default=DefaultBotProperties(parse_mode=ParseMode.HTML)
     )
 
@@ -475,7 +475,7 @@ async def main():
                     await asyncio.sleep(retry_delay)
                     # Пересоздаем bot для нового соединения
                     bot = Bot(
-                        token=Config.BOT_TOKEN,
+                        token=Config.get_bot_token(),
                         default=DefaultBotProperties(parse_mode=ParseMode.HTML)
                     )
                     continue

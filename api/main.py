@@ -71,7 +71,7 @@ async def get_current_user(
             detail="Missing Telegram init data"
         )
 
-    return validate_telegram_web_app_data(x_telegram_init_data, Config.BOT_TOKEN)
+    return validate_telegram_web_app_data(x_telegram_init_data, Config.get_bot_token())
 
 
 # Dependency для БД

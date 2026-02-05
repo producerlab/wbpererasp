@@ -2,7 +2,7 @@
 Базовый HTTP клиент для WB API с rate limiting.
 
 Реализует:
-- Token bucket rate limiting (6 запросов/минуту для коэффициентов)
+- Token bucket rate limiting
 - Retry логику с exponential backoff
 - Централизованную обработку ошибок
 """
@@ -53,7 +53,6 @@ class WBNotFoundError(WBApiError):
 class Endpoint(Enum):
     """WB API endpoints с их rate limits"""
     WAREHOUSES = ("warehouses", 60)          # 60 req/min
-    COEFFICIENTS = ("coefficients", 6)        # 6 req/min (критично!)
     STOCKS = ("stocks", 60)                   # 60 req/min
     SUPPLIES = ("supplies", 60)               # 60 req/min
     ACCEPTANCE = ("acceptance", 60)           # 60 req/min

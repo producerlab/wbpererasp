@@ -74,50 +74,6 @@ class EncryptionError(TokenError):
     pass
 
 
-# ==================== Booking Errors ====================
-
-class BookingError(WBBotError):
-    """Ошибки бронирования"""
-    pass
-
-
-class SlotNotAvailableError(BookingError):
-    """Слот недоступен"""
-    pass
-
-
-class SlotAlreadyBookedError(BookingError):
-    """Слот уже забронирован"""
-    pass
-
-
-class DailyLimitExceededError(BookingError):
-    """Превышен дневной лимит бронирований"""
-    pass
-
-
-class BookingCancelError(BookingError):
-    """Ошибка отмены бронирования"""
-    pass
-
-
-# ==================== Monitoring Errors ====================
-
-class MonitoringError(WBBotError):
-    """Ошибки мониторинга"""
-    pass
-
-
-class SubscriptionError(MonitoringError):
-    """Ошибка подписки"""
-    pass
-
-
-class WarehouseNotFoundError(MonitoringError):
-    """Склад не найден"""
-    pass
-
-
 # ==================== User Errors ====================
 
 class UserError(WBBotError):

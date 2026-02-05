@@ -45,11 +45,6 @@ class AcceptanceOption:
     box_type_id: Optional[int] = None
     box_type_name: Optional[str] = None
 
-    @property
-    def is_profitable(self) -> bool:
-        """Выгодный коэффициент"""
-        return 0 <= self.coefficient <= 1
-
     @classmethod
     def from_api_response(cls, data: Dict[str, Any]) -> 'AcceptanceOption':
         """Создаёт AcceptanceOption из ответа API"""
@@ -133,7 +128,7 @@ class BookingResult:
     date: Optional[date] = None
     error_message: Optional[str] = None
     raw_response: Optional[Dict] = None
-    user_id: Optional[int] = None  # ID пользователя (для автобронирования)
+    user_id: Optional[int] = None  # ID пользователя
 
 
 class SuppliesAPI:
