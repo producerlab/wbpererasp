@@ -426,13 +426,63 @@ async def handle_cookies_json(message: Message, state: FSMContext):
             expires_days=7
         )
 
-        await message.answer(
-            f"✅ <b>Cookies импортированы успешно!</b>\n\n"
-            f"📊 Импортировано: {len(wb_cookies)} cookies\n"
-            f"⏰ Срок действия: 7 дней\n\n"
-            f"Теперь можете использовать бота без SMS авторизации!",
-            parse_mode=ParseMode.HTML
-        )
+        # Пробуем загрузить профили с импортированными cookies
+        try:
+            from browser.auth import WBAuthService
+
+            # Уведомляем пользователя что начинается загрузка профилей
+            status_msg = await message.answer(
+                "🔄 Cookies сохранены! Загружаю профили поставщиков...",
+                parse_mode=ParseMode.HTML
+            )
+
+            # Обновляем сессию с профилями (открывает браузер, применяет cookies, получает профили)
+            auth_service = WBAuthService()
+            # refresh_profiles_with_cookies принимает расшифрованные cookies
+            profiles = await auth_service.refresh_profiles_with_cookies(playwright_cookies)
+
+            if profiles:
+                # Обновляем supplier_name в БД
+                supplier_info = f"{profiles[0]['name']}"
+                if profiles[0].get('company'):
+                    supplier_info += f" ({profiles[0]['company']})"
+
+                db.invalidate_browser_session(user_id)
+                db.add_browser_session(
+                    user_id=user_id,
+                    phone="",
+                    cookies_encrypted=cookies_encrypted,
+                    supplier_name=supplier_info,
+                    expires_days=7
+                )
+
+                await status_msg.edit_text(
+                    f"✅ <b>Cookies импортированы успешно!</b>\n\n"
+                    f"📊 Импортировано: {len(wb_cookies)} cookies\n"
+                    f"👤 Профиль: {supplier_info}\n"
+                    f"📋 Доступно профилей: {len(profiles)}\n"
+                    f"⏰ Срок действия: 7 дней\n\n"
+                    f"Теперь можете использовать бота!",
+                    parse_mode=ParseMode.HTML
+                )
+            else:
+                await status_msg.edit_text(
+                    f"⚠️ <b>Cookies импортированы, но не удалось загрузить профили</b>\n\n"
+                    f"📊 Импортировано: {len(wb_cookies)} cookies\n"
+                    f"⏰ Срок действия: 7 дней\n\n"
+                    f"Cookies могли истечь или требуется повторная авторизация в браузере.",
+                    parse_mode=ParseMode.HTML
+                )
+        except Exception as e:
+            logger.warning(f"Failed to load profiles after cookie import: {e}")
+            # Даже если не удалось загрузить профили, cookies сохранены
+            await message.answer(
+                f"✅ <b>Cookies импортированы!</b>\n\n"
+                f"📊 Импортировано: {len(wb_cookies)} cookies\n"
+                f"⏰ Срок действия: 7 дней\n\n"
+                f"⚠️ Не удалось автоматически загрузить профили, но вы можете попробовать использовать бота.",
+                parse_mode=ParseMode.HTML
+            )
 
         # Очищаем состояние
         await state.clear()
